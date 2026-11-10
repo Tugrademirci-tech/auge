@@ -149,8 +149,8 @@ async function call(system,userText,imgs){
  let res,j;
  for(const m of MODELS){
   const ac=new AbortController(),to=setTimeout(()=>ac.abort(),40000);
-  try{res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent",{method:"POST",headers:{"content-type":"application/json","x-goog-api-key":key},body,signal:ac.signal});j=await res.json()}
-  catch(e){throw {code:"net",message:"Keine Verbindung oder zu langsam ("+(e.message||e)+")"}}
+  try{res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent",{method:"POST",headers:{"content-type":"application/json","x-goog-api-key":key.replace(/[^\x21-\x7E]/g,"")},body,signal:ac.signal});j=await res.json()}
+  catch(e){throw {code:"net",message:"Keine Verbindung ("+(e.name||"")+": "+(e.message||e)+")"}}
   finally{clearTimeout(to)}
   if(res.status!==404)break;
  }
@@ -215,7 +215,7 @@ $("bWipe").onclick=()=>{if(confirm("Gedächtnis und Gesichtsprofil löschen?")){
 $("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
 $("bSet").onclick=()=>{const v=prompt("Schlüssel eingeben (bleibt nur auf diesem Handy):",key);if(v!==null){key=v.trim();store.set("k",key);note(key?"Schlüssel gespeichert.":"Schlüssel gelöscht.")}};
 renderMem();
-note("Version 4");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
+note("Version 5");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
 initAI();
 </script>
 </body>
