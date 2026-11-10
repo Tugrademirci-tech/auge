@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Auge</title>
+<style>
+:root{--bg:#0e1116;--panel:#171c24;--line:#2a323f;--text:#e8e4da;--mute:#8d96a5;--accent:#e0a84a;--me:#233246;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1116;--panel:#171c24;--line:#2a323f;--text:#e8e4da;--mute:#8d96a5;--me:#233246}}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#eceae3;--panel:#f8f6f0;--line:#d2cec2;--text:#1c2128;--mute:#667080;--accent:#b97a12;--me:#dfe6ee}}
+:root[data-theme="dark"]{--bg:#0e1116;--panel:#171c24;--line:#2a323f;--text:#e8e4da;--mute:#8d96a5;--me:#233246}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:16px/1.45 Georgia,"Times New Roman",serif;display:flex;flex-direction:column;max-width:720px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;gap:8px}
+h1{font-size:1.1rem;margin:0;font-weight:600;letter-spacing:.02em}
+#state{font-size:.85rem;color:var(--mute);text-align:right}
+#stage{position:relative;flex:0 0 auto;display:flex;justify-content:center}
+canvas#eye{width:min(78vw,330px);height:min(78vw,330px);touch-action:none}
+video#cam{position:absolute;right:12px;top:0;width:84px;height:112px;object-fit:cover;border-radius:10px;border:1px solid var(--line);transform:scaleX(-1);background:#000;display:none}
+#bar{display:flex;flex-wrap:wrap;gap:8px;padding:6px 14px}
+button{font:inherit;font-size:.9rem;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{border-color:var(--accent);color:var(--accent)}
+#log{flex:1;overflow-y:auto;padding:8px 14px;display:flex;flex-direction:column;gap:8px;min-height:120px}
+.m{max-width:88%;padding:8px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel);white-space:pre-wrap}
+.m.me{align-self:flex-end;background:var(--me)}
+.m.note{align-self:center;font-size:.85rem;color:var(--mute);border-style:dashed;background:transparent}
+form{display:flex;gap:8px;padding:10px 14px}
+input[type=text]{flex:1;font:inherit;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);min-width:0}
+details{padding:0 14px 6px;font-size:.85rem;color:var(--mute)}
+details li{margin:2px 0}details button{padding:0 6px;font-size:.8rem;margin-left:6px}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header><h1>Auge</h1><div id="state">Kamera aus</div></header>
+<div id="stage"><canvas id="eye" width="660" height="660" aria-label="Rotierendes Auge"></canvas><video id="cam" playsinline muted></video></div>
+<div id="bar">
+ <button id="bCam">Kamera starten</button>
+ <button id="bLook" disabled>Was siehst du?</button>
+ <button id="bWatch" disabled>Beobachten</button>
+ <button id="bEnroll" disabled>Mich merken</button>
+ <button id="bChess">Schach spielen</button>
+ <button id="bSet">Einstellungen</button>
+</div>
+<details><summary>Gedächtnis (<span id="nMem">0</span>)</summary><ul id="mem"></ul><button id="bWipe">Alles vergessen</button></details>
+<div id="log" role="log" aria-live="polite"></div>
+<form id="f"><input id="in" type="text" placeholder="Schreib mir etwas …" autocomplete="off"><button>Senden</button></form>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+let facts=store.get("facts",[]),owner=store.get("owner",null),history=[],sample=null,limits=null,lastKnown=null,busy=false;
+
+/* ---------- Auge ---------- */
+const cv=$("eye"),cx=cv.getContext("2d"),W=660,C=W/2,R=250;
+let tgt={x:0,y:0},cur={x:0,y:0},blink=0,nextBlink=2,dil=0.42,dilT=0.42,t0=performance.now();
+function drawEye(t){
+ const dt=Math.min(.05,(t-t0)/1000);t0=t;
+ cur.x+=(tgt.x-cur.x)*Math.min(1,dt*7);cur.y+=(tgt.y-cur.y)*Math.min(1,dt*7);
+ dil+=(dilT-dil)*Math.min(1,dt*4);
+ nextBlink-=dt;if(nextBlink<0){blink=1;nextBlink=2+Math.random()*4}
+ blink=Math.max(0,blink-dt*5);
+ cx.clearRect(0,0,W,W);
+ // Kugel
+ let g=cx.createRadialGradient(C-90,C-100,20,C,C,R);
+ g.addColorStop(0,"#fbf8f0");g.addColorStop(.7,"#e4ddd0");g.addColorStop(1,"#a99f90");
+ cx.fillStyle=g;cx.beginPath();cx.arc(C,C,R,0,7);cx.fill();
+ // Äderchen am Rand
+ cx.save();cx.beginPath();cx.arc(C,C,R,0,7);cx.clip();
+ cx.strokeStyle="rgba(170,60,50,.22)";cx.lineWidth=2;
+ for(let i=0;i<14;i++){const a=i*.45+cur.x*.9;cx.beginPath();cx.moveTo(C+Math.cos(a)*R,C+Math.sin(a)*R);cx.quadraticCurveTo(C+Math.cos(a+.2)*R*.82,C+Math.sin(a+.2)*R*.82,C+Math.cos(a+.1)*R*.68,C+Math.sin(a+.1)*R*.68);cx.stroke()}
+ // Iris auf der Kugel: Position + perspektivische Stauchung
+ const lim=.62,ex=Math.max(-1,Math.min(1,cur.x)),ey=Math.max(-1,Math.min(1,cur.y));
+ const px=C+ex*R*lim,py=C+ey*R*lim*.85;
+ const ang=Math.atan2(py-C,px-C),dist=Math.hypot(px-C,py-C)/R;
+ const sq=Math.cos(Math.min(1.2,dist*1.1)),ir=118;
+ cx.translate(px,py);cx.rotate(ang);
+ cx.scale(Math.max(.45,sq),1);
+ let ig=cx.createRadialGradient(0,0,10,0,0,ir);
+ ig.addColorStop(0,"#3a2a10");ig.addColorStop(.35,"#b87a1c");ig.addColorStop(.75,"#2f6a63");ig.addColorStop(1,"#10282a");
+ cx.fillStyle=ig;cx.beginPath();cx.arc(0,0,ir,0,7);cx.fill();
+ cx.save();cx.rotate(-ang+t0/6000);cx.strokeStyle="rgba(255,220,150,.22)";cx.lineWidth=2;
+ for(let i=0;i<46;i++){const a=i/46*6.283;cx.beginPath();cx.moveTo(Math.cos(a)*ir*.38,Math.sin(a)*ir*.38);cx.lineTo(Math.cos(a)*ir*.96,Math.sin(a)*ir*.96);cx.stroke()}
+ cx.restore();
+ cx.strokeStyle="#07161a";cx.lineWidth=6;cx.beginPath();cx.arc(0,0,ir,0,7);cx.stroke();
+ cx.fillStyle="#04070a";cx.beginPath();cx.arc(0,0,ir*dil,0,7);cx.fill();
+ cx.setTransform(1,0,0,1,0,0);
+ // Glanzpunkt (bleibt fix -> wirkt wie Rotation der Kugel)
+ cx.fillStyle="rgba(255,255,255,.85)";cx.beginPath();cx.ellipse(C-95+ex*-14,C-110+ey*-14,34,22,-.6,0,7);cx.fill();
+ // Lid
+ const lid=blink<.5?blink*2:(1-blink)*2;
+ if(lid>0){cx.fillStyle="#1b1510";cx.fillRect(0,0,W,C*lid*1.05-0);cx.fillRect(0,W-C*lid*1.05,W,C*lid*1.05)}
+ cx.restore();
+ // Rand
+ let sh=cx.createRadialGradient(C,C,R*.82,C,C,R*1.02);sh.addColorStop(0,"rgba(0,0,0,0)");sh.addColorStop(1,"rgba(0,0,0,.35)");
+ cx.fillStyle=sh;cx.beginPath();cx.arc(C,C,R,0,7);cx.fill();
+ requestAnimationFrame(drawEye);
+}
+requestAnimationFrame(drawEye);
+// Fallback: Auge folgt Finger/Maus
+function pointer(e){const r=cv.getBoundingClientRect();if(!camOn){tgt.x=((e.clientX-r.left)/r.width-.5)*2.4;tgt.y=((e.clientY-r.top)/r.height-.5)*2.4}}
+addEventListener("pointermove",pointer);addEventListener("pointerdown",pointer);
+
+/* ---------- Kamera + Tracking ---------- */
+const vid=$("cam");let camOn=false,stream=null,faceDet=null,prev=null,faceSeen=false,lastFace=0;
+const tc=document.createElement("canvas");tc.width=40;tc.height=30;const tx=tc.getContext("2d",{willReadFrequently:true});
+async function startCam(){
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:640,height:480},audio:false});
+  vid.srcObject=stream;await vid.play();vid.style.display="block";camOn=true;
+  if("FaceDetector" in window){try{faceDet=new FaceDetector({fastMode:true,maxDetectedFaces:1})}catch(e){}}
+  ["bLook","bWatch","bEnroll"].forEach(i=>$(i).disabled=false);$("bCam").textContent="Kamera aus";
+  setState("Kamera an");track();
+ }catch(e){note("Kamera nicht verfügbar. Erlaube den Zugriff und öffne die Seite über HTTPS.")}
+}
+function stopCam(){camOn=false;watching=false;$("bWatch").classList.remove("on");stream&&stream.getTracks().forEach(t=>t.stop());vid.style.display="none";["bLook","bWatch","bEnroll"].forEach(i=>$(i).disabled=true);$("bCam").textContent="Kamera starten";tgt={x:0,y:0};setState("Kamera aus")}
+async function track(){
+ if(!camOn)return;
+ let found=false;
+ try{
+  if(faceDet&&vid.videoWidth){const f=await faceDet.detect(vid);if(f[0]){const b=f[0].boundingBox;
+   tgt.x=(.5-(b.x+b.width/2)/vid.videoWidth)*2.2*-1*-1;tgt.y=((b.y+b.height/2)/vid.videoHeight-.5)*2.2;found=true}}
+  else if(vid.videoWidth){ // Bewegungs-Schwerpunkt als Ersatz
+   tx.drawImage(vid,0,0,40,30);const d=tx.getImageData(0,0,40,30).data;
+   if(prev){let sx=0,sy=0,n=0;for(let i=0;i<d.length;i+=4){const df=Math.abs(d[i]-prev[i])+Math.abs(d[i+1]-prev[i+1])+Math.abs(d[i+2]-prev[i+2]);if(df>70){const p=i/4;sx+=p%40;sy+=Math.floor(p/40);n++}}
+    if(n>12){tgt.x=(.5-sx/n/40)*-2.2*-1;tgt.y=(sy/n/30-.5)*2.2;found=true}}
+   prev=d;
+  }
+ }catch(e){}
+ if(found){lastFace=Date.now()}else if(Date.now()-lastFace>4000){tgt.x*=.9;tgt.y*=.9}
+ setTimeout(track,faceDet?120:90);
+}
+function frame(w=384){const c=document.createElement("canvas"),r=vid.videoHeight/vid.videoWidth;c.width=w;c.height=Math.round(w*r);c.getContext("2d").drawImage(vid,0,0,c.width,c.height);return new Promise(res=>c.toBlob(res,"image/jpeg",.7))}
+const blobToData=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(b)});
+const dataToBlob=async u=>(await fetch(u)).blob();
+
+/* ---------- KI ---------- */
+const MODEL="gemini-2.5-flash";
+let key=store.get("k","");
+function initAI(){if(!key)note("Tippe auf „Einstellungen“ und gib deinen Schlüssel ein, damit ich antworten kann.")}
+async function call(system,userText,imgs){
+ const parts=[];
+ for(const b of imgs)parts.push({inlineData:{mimeType:"image/jpeg",data:(await blobToData(b)).split(",")[1]}});
+ parts.push({text:userText});
+ const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+MODEL+":generateContent",{method:"POST",headers:{"content-type":"application/json","x-goog-api-key":key},body:JSON.stringify({systemInstruction:{parts:[{text:system}]},contents:[{role:"user",parts}],generationConfig:{responseMimeType:"application/json",maxOutputTokens:1000,thinkingConfig:{thinkingBudget:0}}})});
+ const j=await res.json();
+ if(!res.ok)throw {code:(res.status===400||res.status===403||res.status===401)?"auth":res.status===429?"rate_limited":"err",message:(j.error&&j.error.message)||res.status};
+ const txt=((j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[]).map(c=>c.text||"").join("");
+ const m=txt.match(/\{[\s\S]*\}/);
+ return JSON.parse(m?m[0]:txt);
+}
+function sys(withImgs,hasRef){
+ return `Du bist „Auge“, eine freundliche, neugierige KI in Form eines Auges auf dem Handy. Antworte auf Deutsch, kurz und klug (meist 1–3 Sätze).
+Bekannte Fakten über den Nutzer (Gedächtnis):\n${facts.length?facts.map(f=>"- "+f).join("\n"):"(noch nichts)"}
+${owner?`Der Besitzer heißt ${owner.name}.`:"Es gibt noch kein Gesichtsprofil des Besitzers."}
+${withImgs?(hasRef?"Bild 1 ist das Referenzfoto des Besitzers. Bild 2 ist das aktuelle Kamerabild. Entscheide vorsichtig, ob in Bild 2 dieselbe Person wie in Bild 1 zu sehen ist.":"Das angehängte Bild ist das aktuelle Kamerabild."):"Kein Kamerabild vorhanden."}
+Wenn eine Person gezeigt wird, die nicht eindeutig der Besitzer ist, sag nicht, wer sie ist, sondern beschreibe nur, was du siehst. Rate nie Namen anhand von Gesichtern.
+Gib NUR JSON zurück: {"reply":"deine Antwort","sees":"kurze Beschreibung des Bildes oder leer","isOwner":true|false|null,"newFacts":["neue dauerhaft merkenswerte Fakten, die der Nutzer genannt hat"]}`;
+}
+async function ask(text,withFrame){
+ if(busy)return null;if(!key){note("Erst den Schlüssel unter „Einstellungen“ eingeben.");return null}busy=true;setState("denke …");dilT=.62;
+ try{
+  let hasRef=false,vis=false,imgsArr=[];
+  if(withFrame&&camOn){const imgs=[];
+   if(owner){imgs.push(await dataToBlob(owner.photo));hasRef=true}
+   imgs.push(await frame());imgsArr=imgs;vis=true}
+  const convo=history.slice(-8).map(h=>`${h.role==="user"?"Nutzer":"Auge"}: ${h.text}`).join("\n");
+  const r=await call(sys(vis,hasRef),"Bisheriges Gespräch:\n"+(convo||"(Anfang)")+"\n\nNutzer: "+text,imgsArr);
+  if(r&&r.newFacts&&r.newFacts.length){r.newFacts.forEach(f=>{if(f&&!facts.includes(f))facts.push(f)});facts=facts.slice(-40);store.set("facts",facts);renderMem()}
+  return r;
+ }catch(e){note(e&&e.code==="auth"?"Der Schlüssel stimmt nicht. Prüfe die Einstellungen.":e&&e.code==="rate_limited"?"Zu viele Anfragen, kurz warten.":"Das hat nicht geklappt: "+((e&&e.message)||"Fehler"));return null}
+ finally{busy=false;dilT=.42;setState(camOn?"Kamera an":"Kamera aus")}
+}
+function handleId(r){
+ if(!r||r.isOwner==null||!owner)return;
+ if(r.isOwner!==lastKnown){lastKnown=r.isOwner;setState(r.isOwner?`Erkannt: ${owner.name}`:"Unbekannte Person")}
+}
+
+/* ---------- UI ---------- */
+function add(txt,cls){const d=document.createElement("div");d.className="m "+cls;d.textContent=txt;$("log").appendChild(d);$("log").scrollTop=1e9}
+function note(t){add(t,"note")}
+function setState(s){$("state").textContent=s}
+function renderMem(){const u=$("mem");u.textContent="";facts.forEach((f,i)=>{const li=document.createElement("li");li.textContent=f;const b=document.createElement("button");b.textContent="×";b.setAttribute("aria-label","Vergessen");b.onclick=()=>{facts.splice(i,1);store.set("facts",facts);renderMem()};li.appendChild(b);u.appendChild(li)});$("nMem").textContent=facts.length}
+$("f").onsubmit=async e=>{e.preventDefault();const v=$("in").value.trim();if(!v)return;$("in").value="";add(v,"me");history.push({role:"user",text:v});
+ const r=await ask(v,camOn);if(r){add(r.reply||"…","ai");history.push({role:"ai",text:r.reply||""});handleId(r)}};
+$("bCam").onclick=()=>camOn?stopCam():startCam();
+$("bLook").onclick=async()=>{const r=await ask("Beschreibe, was du gerade durch die Kamera siehst, und sag, ob du mich erkennst.",true);if(r){add(r.reply||r.sees,"ai");history.push({role:"ai",text:r.reply||""});handleId(r)}};
+let watching=false,wt=null;
+$("bWatch").onclick=()=>{watching=!watching;$("bWatch").classList.toggle("on",watching);if(watching)loopWatch()};
+async function loopWatch(){
+ if(!watching||!camOn)return;
+ const r=await ask("Beobachte die Szene. Melde dich nur mit einem kurzen Satz, wenn sich etwas Neues oder Interessantes zeigt (z. B. jemand kommt, geht, hält etwas hoch). Sonst gib als reply einen leeren String zurück.",true);
+ if(r&&r.reply&&r.reply.trim()){add(r.reply,"ai")}handleId(r);
+ wt=setTimeout(loopWatch,25000);
+}
+$("bEnroll").onclick=async()=>{
+ const name=(prompt("Wie heißt du?")||"").trim();if(!name)return;
+ note("Schau bitte direkt in die Kamera …");await new Promise(r=>setTimeout(r,1800));
+ const b=await frame(320);owner={name,photo:await blobToData(b)};store.set("owner",owner);
+ if(!facts.some(f=>f.startsWith("Name:")))facts.push("Name: "+name);store.set("facts",facts);renderMem();
+ lastKnown=true;setState("Erkannt: "+name);note(`Gesichtsprofil von ${name} gespeichert (nur auf diesem Gerät).`);
+};
+$("bWipe").onclick=()=>{if(confirm("Gedächtnis und Gesichtsprofil löschen?")){facts=[];owner=null;lastKnown=null;try{localStorage.clear()}catch(e){}renderMem();note("Alles vergessen.")}};
+$("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
+$("bSet").onclick=()=>{const v=prompt("Schlüssel eingeben (bleibt nur auf diesem Handy):",key);if(v!==null){key=v.trim();store.set("k",key);note(key?"Schlüssel gespeichert.":"Schlüssel gelöscht.")}};
+renderMem();
+note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
+initAI();
+</script>
+</body>
+</html>
