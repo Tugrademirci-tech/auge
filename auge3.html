@@ -138,7 +138,7 @@ const blobToData=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.re
 const dataToBlob=async u=>(await fetch(u)).blob();
 
 /* ---------- KI ---------- */
-const MODELS=["gemini-3.8-flash","gemini-3.5-flash-lite","gemini-3.6-flash"];
+const MODELS=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite","gemini-3.1-flash-lite","gemini-3.8-flash"];
 let key=store.get("k","");
 function initAI(){if(!key)note("Tippe auf „Einstellungen“ und gib deinen Schlüssel ein, damit ich antworten kann.")}
 async function call(system,userText,imgs){
@@ -152,7 +152,8 @@ async function call(system,userText,imgs){
   try{res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent",{method:"POST",headers:{"content-type":"application/json","x-goog-api-key":key.replace(/[^\x21-\x7E]/g,"")},body,signal:ac.signal});j=await res.json()}
   catch(e){throw {code:"net",message:"Keine Verbindung ("+(e.name||"")+": "+(e.message||e)+")"}}
   finally{clearTimeout(to)}
-  if(res.status!==404)break;
+  if(res.ok||[400,401,403].includes(res.status))break;
+  await new Promise(r=>setTimeout(r,800));
  }
  if(!res.ok)throw {code:(res.status===400||res.status===403||res.status===401)?"auth":res.status===429?"rate_limited":"err",message:(j.error&&j.error.message)||res.status};
  const txt=((j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[]).map(c=>c.text||"").join("");
@@ -215,7 +216,7 @@ $("bWipe").onclick=()=>{if(confirm("Gedächtnis und Gesichtsprofil löschen?")){
 $("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
 $("bSet").onclick=()=>{const v=prompt("Schlüssel eingeben (bleibt nur auf diesem Handy):",key);if(v!==null){key=v.trim();store.set("k",key);note(key?"Schlüssel gespeichert.":"Schlüssel gelöscht.")}};
 renderMem();
-note("Version 5");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
+note("Version 6");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
 initAI();
 </script>
 </body>
