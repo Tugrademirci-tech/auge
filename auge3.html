@@ -86,21 +86,60 @@ function initAudioAnalysis(stream){
 const cv=$("eye"),cx=cv.getContext("2d"),W=660,C=W/2,R=250;
 let tgt={x:0,y:0},cur={x:0,y:0},blink=0,nextBlink=2,dil=0.42,dilT=0.42,t0=performance.now();
 let red=0,redT=0,sleep=0,sleepT=0,bright=128,curMode="d",overdrive=false;
-const PAL={neutral:[[58,42,16],[184,122,28],[47,106,99],[16,40,42]],freude:[[90,60,10],[240,190,50],[120,190,70],[30,70,30]],wut:[[60,5,5],[220,40,20],[150,10,10],[40,0,0]],traurig:[[15,25,60],[60,100,190],[40,70,140],[10,20,50]],"überrascht":[[60,40,90],[200,170,255],[120,200,255],[30,40,80]],neugierig:[[10,50,60],[40,200,210],[40,140,200],[10,40,60]],overdrive:[[90,0,0],[255,20,20],[180,0,0],[50,0,0]]};
+
+/* Organische Mikrobewegungen & Sakkaden */
+let saccadeTimer=0, saccadeDx=0, saccadeDy=0;
+
+/* Erweitertes Farbsystem: Grau, Gelb, Rot, Pink, Blau, Türkis */
+const PAL={
+ neutral:  [[40,45,55],   [160,170,185], [100,110,125], [20,25,35]],  // Grau / Silber
+ freude:   [[120,90,10],  [255,215,0],   [220,160,20],  [50,40,10]],  // Strahlendes Gelb / Gold
+ wut:      [[90,0,0],     [255,30,30],   [180,10,10],   [60,0,0]],    // Kochendes Rot
+ niedlich: [[100,20,60],  [255,110,180], [220,50,140],  [60,10,35]],  // Soft Pink / Liebe
+ traurig:  [[15,25,60],   [60,100,190],  [40,70,140],   [10,20,50]],  // Tiefblau
+ neugierig:[[10,50,60],   [40,200,210],  [40,140,200],  [10,40,60]],  // Cyan / Türkis
+ overdrive:[[90,0,0],     [255,20,20],   [180,0,0],     [50,0,0]]     // Neon-Rot
+};
+
 let pal=JSON.parse(JSON.stringify(PAL.neutral)),palT=PAL.neutral,emoTimer=null;
-function setEmo(n){if(overdrive)return;palT=PAL[n]||PAL.neutral;clearTimeout(emoTimer);if(n&&n!=="neutral")emoTimer=setTimeout(()=>{palT=PAL.neutral},14000)}
-function guessEmo(t){t=t.toLowerCase();
- if(/wütend|ärger|nervt|blöd|dumm|hass|idiot/.test(t))return "wut";
- if(/traurig|schade|leider|einsam|vermiss|tut mir leid/.test(t))return "traurig";
- if(/haha|super|toll|freu|prima|klasse|danke|gern geschehen|schön/.test(t))return "freude";
- if(/wow|krass|unglaub|überrasch|\?!|!\?/.test(t))return "überrascht";
+
+function setEmo(n){
+ if(overdrive)return;
+ palT=PAL[n]||PAL.neutral;
+ clearTimeout(emoTimer);
+ if(n&&n!=="neutral")emoTimer=setTimeout(()=>{palT=PAL.neutral},14000);
+}
+
+function guessEmo(t){
+ t=t.toLowerCase();
+ if(/wütend|ärger|nervt|blöd|dumm|hass|idiot|wut|feind/.test(t))return "wut";
+ if(/traurig|schade|leider|einsam|vermiss|tut mir leid|weinen/.test(t))return "traurig";
+ if(/haha|super|toll|freu|prima|klasse|danke|gern geschehen|schön|glücklich|sonne/.test(t))return "freude";
+ if(/süß|niedlich|liebe|hervorragend|schatz|hab dich lieb|herz|knuffig|pink/.test(t))return "niedlich";
+ if(/wow|krass|unglaub|überrasch|\?!|!\?/.test(t))return "neugierig";
  if(/\?/.test(t))return "neugierig";
- return "neutral"}
+ return "neutral";
+}
+
 const mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
 const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
+
 function drawEye(t){
  const dt=Math.min(.05,(t-t0)/1000);t0=t;
- cur.x+=(tgt.x-cur.x)*Math.min(1,dt*7);cur.y+=(tgt.y-cur.y)*Math.min(1,dt*7);
+ 
+ // Organische Sakkaden & Micro-Jitter (Lebensnah)
+ saccadeTimer -= dt;
+ if(saccadeTimer <= 0){
+  saccadeDx = (Math.random() - 0.5) * 0.08;
+  saccadeDy = (Math.random() - 0.5) * 0.08;
+  saccadeTimer = 0.4 + Math.random() * 2.5;
+ }
+
+ const effTgtX = tgt.x + saccadeDx;
+ const effTgtY = tgt.y + saccadeDy;
+
+ cur.x+=(effTgtX-cur.x)*Math.min(1,dt*7);
+ cur.y+=(effTgtY-cur.y)*Math.min(1,dt*7);
  
  if(analyser&&micData){
   analyser.getByteFrequencyData(micData);
@@ -109,17 +148,22 @@ function drawEye(t){
   audioPulse+=(avg/255-audioPulse)*Math.min(1,dt*10);
  }else{audioPulse*=0.9}
 
- dil+=(dilT+audioPulse*0.25-dil)*Math.min(1,dt*4);
+ // Atmendes Pupillen-Pulsieren
+ const organicBreath = Math.sin(t / 800) * 0.03;
+
+ dil+=(dilT + organicBreath + audioPulse*0.25 - dil)*Math.min(1,dt*4);
  red+=(redT-red)*Math.min(1,dt*2);sleep+=(sleepT-sleep)*Math.min(1,dt*1.5);
  for(let i=0;i<4;i++)pal[i]=pal[i].map((v,j)=>v+(palT[i][j]-v)*Math.min(1,dt*3));
  nextBlink-=dt;if(nextBlink<0){blink=1;nextBlink=2+Math.random()*4}
  blink=Math.max(0,blink-dt*5);
  cx.clearRect(0,0,W,W);
+ 
  // HUD-Ringe
  const hc=mix(mix([90,220,255],pal[1],.55),[255,60,50],overdrive?1:red);
  cx.save();cx.translate(C,C);cx.lineCap="round";
  for(let k=0;k<3;k++){cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*(overdrive?1.5:.6));cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);cx.beginPath();cx.arc(0,0,272+k*16+audioPulse*15,0,7);cx.stroke();cx.restore()}
  cx.restore();
+ 
  // Kugel
  let g=cx.createRadialGradient(C-90,C-100,20,C,C,R);
  g.addColorStop(0,"#fbf8f0");g.addColorStop(.7,"#e4ddd0");g.addColorStop(1,"#a99f90");
@@ -160,6 +204,7 @@ function drawEye(t){
  requestAnimationFrame(drawEye);
 }
 requestAnimationFrame(drawEye);
+
 // Fallback: Auge folgt Finger/Maus
 function pointer(e){const r=cv.getBoundingClientRect();if(!camOn){tgt.x=((e.clientX-r.left)/r.width-.5)*2.4;tgt.y=((e.clientY-r.top)/r.height-.5)*2.4}}
 addEventListener("pointermove",pointer);addEventListener("pointerdown",pointer);
@@ -232,9 +277,9 @@ function sys(withImgs,hasRef){
  return `Du bist TumyE, ein souveräner, höflicher und trocken-witziger Assistent im Stil von J.A.R.V.I.S., in Form eines leuchtenden Auges auf dem Handy.${overdrive?" DU BIST IM OVERDRIVE MODUS: Antworte extrem sarkastisch, trocken, kühl und leicht bedrohlich wie ein Sci-Fi Sicherheitscomputer.":""} Antworte auf Deutsch, kurz und klug (meist 1–3 Sätze).
 Bekannte Fakten über den Nutzer (Gedächtnis):\n${facts.length?facts.map(f=>"- "+f).join("\n"):"(noch nichts)"}
 ${owner?`Der Besitzer heißt ${owner.name}.`:"Es gibt noch kein Gesichtsprofil des Besitzers."}
-${withImgs?(hasRef?"Bild 1 ist das Referenzfoto des Besitzers. Bild 2 ist das aktuelle Kamerabild. Entscheide vorsichtig, ob in Bild 2 dieselbe Person wie in Bild 1 zu sehen ist.":"Das angehängte Bild ist das aktuelle Kamerabild."):"Kein Kamerabild vorhanden."}
+${withImgs?(hasRef?"Bild 1 ist das Referenzfoto des Besitzers. Bild 2 ist das aktuelle Kamerabild. Entscheide vorsichtig, ob in Bild 2 dieselbe Person wie in Bild 1 zu sehen ist. Analysiere auch die gefühlte Emotion/Mimik der Person.":"Das angehängte Bild ist das aktuelle Kamerabild. Analysiere die gefühlte Emotion/Mimik."):"Kein Kamerabild vorhanden."}
 Wenn eine Person gezeigt wird, die nicht eindeutig der Besitzer ist, sag nicht, wer sie ist, sondern beschreibe nur, was du siehst. Rate nie Namen anhand von Gesichtern.
-Gib NUR JSON zurück: {"reply":"deine Antwort","emotion":"neutral|freude|wut|traurig|überrascht|neugierig (Stimmung deiner Antwort)","sees":"kurze Beschreibung des Bildes oder leer","isOwner":true|false|null,"newFacts":["neue dauerhaft merkenswerte Fakten, die der Nutzer genannt hat"]}`;
+Gib NUR JSON zurück: {"reply":"deine Antwort","emotion":"neutral|freude|wut|traurig|überrascht|neugierig|niedlich (wähle passend: niedlich für rosa/liebe, neutral für grau, freude für gelb, wut für kochendes rot, traurig für tiefblau)","sees":"kurze Beschreibung des Bildes oder leer","isOwner":true|false|null,"newFacts":["neue dauerhaft merkenswerte Fakten, die der Nutzer genannt hat"]}`;
 }
 async function ask(text,withFrame){
  if(busy)return null;if(useLocal)return askLocal(text);if(!key){return local?askLocal(text):brainAnswer(text)}busy=true;setState("denke …");dilT=.62;
@@ -280,12 +325,12 @@ $("f").onsubmit=async e=>{e.preventDefault();const v=$("in").value.trim();if(!v)
  const lc=localCmd(v);if(lc){add(lc,"ai");history.push({role:"ai",text:lc});return}
  const r=await ask(v,camOn);if(r){add(r.reply||"…","ai");history.push({role:"ai",text:r.reply||""});handleId(r)}};
 $("bCam").onclick=()=>camOn?stopCam():startCam();
-$("bLook").onclick=async()=>{const r=await ask("Beschreibe, was du gerade durch die Kamera siehst, und sag, ob du mich erkennst.",true);if(r){add(r.reply||r.sees,"ai");history.push({role:"ai",text:r.reply||""});handleId(r)}};
+$("bLook").onclick=async()=>{const r=await ask("Beschreibe, was du gerade durch die Kamera siehst, wie meine Mimik/Emotion aussieht und sag, ob du mich erkennst.",true);if(r){add(r.reply||r.sees,"ai");history.push({role:"ai",text:r.reply||""});handleId(r)}};
 let watching=false,wt=null;
 $("bWatch").onclick=()=>{watching=!watching;$("bWatch").classList.toggle("on",watching);if(watching)loopWatch()};
 async function loopWatch(){
  if(!watching||!camOn)return;
- const r=await ask("Beobachte die Szene. Melde dich nur mit einem kurzen Satz, wenn sich etwas Neues oder Interessantes zeigt (z. B. jemand kommt, geht, hält etwas hoch). Sonst gib als reply einen leeren String zurück.",true);
+ const r=await ask("Beobachte die Szene und meine Mimik. Melde dich nur mit einem kurzen Satz, wenn sich etwas Neues oder Interessantes zeigt (z. B. eine Stimmungsänderung oder jemand kommt). Sonst gib als reply einen leeren String zurück.",true);
  if(r&&r.reply&&r.reply.trim()){add(r.reply,"ai")}handleId(r);
  wt=setTimeout(loopWatch,25000);
 }
@@ -397,7 +442,7 @@ $("bOverdrive").onclick=toggleOverdrive;
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 $("bSet").onclick=()=>{const v=prompt("Schlüssel eingeben (bleibt nur auf diesem Handy):",key);if(v!==null){key=v.trim();store.set("k",key);note(key?"Schlüssel gespeichert.":"Schlüssel gelöscht.")}};
 renderMem();
-note("TumyE Version 9 (Expanded)");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
+note("TumyE Version 10 (Organisch & Emotional)");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
 initAI();
 </script>
 </body>
