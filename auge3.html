@@ -30,6 +30,8 @@ form{display:flex;gap:8px;padding:10px 14px}
 input[type=text]{flex:1;font:inherit;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);min-width:0}
 details{padding:0 14px 6px;font-size:.85rem;color:var(--mute)}
 details li{margin:2px 0}details button{padding:0 6px;font-size:.8rem;margin-left:6px}
+.hub-panel{display:none;padding:8px 14px;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:0 14px 8px}
+.hub-panel.open{display:flex;flex-wrap:wrap}
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
 #scan{position:fixed;inset:0;background:rgba(2,8,12,.94);color:#6ff;font:13px/1.45 ui-monospace,Menlo,monospace;padding:calc(env(safe-area-inset-top,0px) + 16px) 14px 16px;display:none;overflow:hidden;z-index:9;white-space:pre-wrap}#scan.on{display:block}
 </style>
@@ -42,12 +44,19 @@ details li{margin:2px 0}details button{padding:0 6px;font-size:.8rem;margin-left
  <button id="bLook" disabled>Was siehst du?</button>
  <button id="bWatch" disabled>Beobachten</button>
  <button id="bEnroll" disabled>Mich merken</button>
- <button id="bChess">Schach spielen</button>
+ <button id="bAstro">Astro & Wetter</button>
+ <button id="bHub">Command Hub</button>
+ <button id="bOverdrive">Overdrive</button>
  <button id="bSet">Einstellungen</button>
  <button id="bOff">Offline-Modus</button>
  <button id="bVoice">Stimme</button>
  <button id="bMic">Mikro</button>
  <button id="bScan">Scan</button>
+</div>
+<div id="hubPanel" class="hub-panel">
+ <button onclick="window.open('https://tugrademirci-tech.github.io/tassy/','_blank','noopener')">♟️ Tassy Chess Engine</button>
+ <button onclick="add('Öffne Terminal/BBEdit Workflow...', 'note')">💻 Dev Workspace</button>
+ <button onclick="add('Aurora-Monitoring aktiv...', 'note')">🌌 Space Weather Monitor</button>
 </div>
 <details><summary>Gedächtnis (<span id="nMem">0</span>)</summary><ul id="mem"></ul><button id="bWipe">Alles vergessen</button></details>
 <div id="log" role="log" aria-live="polite"></div>
@@ -60,13 +69,26 @@ const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 let facts=store.get("facts",[]),owner=store.get("owner",null),history=[],sample=null,limits=null,lastKnown=null,busy=false;
 
+/* ---------- Audio Analyser (Stimmen-Reaktion) ---------- */
+let audioCtx=null,analyser=null,micData=null,audioPulse=0;
+function initAudioAnalysis(stream){
+ try{
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  analyser=audioCtx.createAnalyser();
+  analyser.fftSize=64;
+  const source=audioCtx.createMediaStreamSource(stream);
+  source.connect(analyser);
+  micData=new Uint8Array(analyser.frequencyBinCount);
+ }catch(e){}
+}
+
 /* ---------- Auge ---------- */
 const cv=$("eye"),cx=cv.getContext("2d"),W=660,C=W/2,R=250;
 let tgt={x:0,y:0},cur={x:0,y:0},blink=0,nextBlink=2,dil=0.42,dilT=0.42,t0=performance.now();
-let red=0,redT=0,sleep=0,sleepT=0,bright=128,curMode="d";
-const PAL={neutral:[[58,42,16],[184,122,28],[47,106,99],[16,40,42]],freude:[[90,60,10],[240,190,50],[120,190,70],[30,70,30]],wut:[[60,5,5],[220,40,20],[150,10,10],[40,0,0]],traurig:[[15,25,60],[60,100,190],[40,70,140],[10,20,50]],"überrascht":[[60,40,90],[200,170,255],[120,200,255],[30,40,80]],neugierig:[[10,50,60],[40,200,210],[40,140,200],[10,40,60]]};
+let red=0,redT=0,sleep=0,sleepT=0,bright=128,curMode="d",overdrive=false;
+const PAL={neutral:[[58,42,16],[184,122,28],[47,106,99],[16,40,42]],freude:[[90,60,10],[240,190,50],[120,190,70],[30,70,30]],wut:[[60,5,5],[220,40,20],[150,10,10],[40,0,0]],traurig:[[15,25,60],[60,100,190],[40,70,140],[10,20,50]],"überrascht":[[60,40,90],[200,170,255],[120,200,255],[30,40,80]],neugierig:[[10,50,60],[40,200,210],[40,140,200],[10,40,60]],overdrive:[[90,0,0],[255,20,20],[180,0,0],[50,0,0]]};
 let pal=JSON.parse(JSON.stringify(PAL.neutral)),palT=PAL.neutral,emoTimer=null;
-function setEmo(n){palT=PAL[n]||PAL.neutral;clearTimeout(emoTimer);if(n&&n!=="neutral")emoTimer=setTimeout(()=>{palT=PAL.neutral},14000)}
+function setEmo(n){if(overdrive)return;palT=PAL[n]||PAL.neutral;clearTimeout(emoTimer);if(n&&n!=="neutral")emoTimer=setTimeout(()=>{palT=PAL.neutral},14000)}
 function guessEmo(t){t=t.toLowerCase();
  if(/wütend|ärger|nervt|blöd|dumm|hass|idiot/.test(t))return "wut";
  if(/traurig|schade|leider|einsam|vermiss|tut mir leid/.test(t))return "traurig";
@@ -79,16 +101,24 @@ const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
 function drawEye(t){
  const dt=Math.min(.05,(t-t0)/1000);t0=t;
  cur.x+=(tgt.x-cur.x)*Math.min(1,dt*7);cur.y+=(tgt.y-cur.y)*Math.min(1,dt*7);
- dil+=(dilT-dil)*Math.min(1,dt*4);
+ 
+ if(analyser&&micData){
+  analyser.getByteFrequencyData(micData);
+  let avg=0;for(let i=0;i<micData.length;i++)avg+=micData[i];
+  avg/=micData.length;
+  audioPulse+=(avg/255-audioPulse)*Math.min(1,dt*10);
+ }else{audioPulse*=0.9}
+
+ dil+=(dilT+audioPulse*0.25-dil)*Math.min(1,dt*4);
  red+=(redT-red)*Math.min(1,dt*2);sleep+=(sleepT-sleep)*Math.min(1,dt*1.5);
  for(let i=0;i<4;i++)pal[i]=pal[i].map((v,j)=>v+(palT[i][j]-v)*Math.min(1,dt*3));
  nextBlink-=dt;if(nextBlink<0){blink=1;nextBlink=2+Math.random()*4}
  blink=Math.max(0,blink-dt*5);
  cx.clearRect(0,0,W,W);
  // HUD-Ringe
- const hc=mix(mix([90,220,255],pal[1],.55),[255,60,50],red);
+ const hc=mix(mix([90,220,255],pal[1],.55),[255,60,50],overdrive?1:red);
  cx.save();cx.translate(C,C);cx.lineCap="round";
- for(let k=0;k<3;k++){cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*.6);cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);cx.beginPath();cx.arc(0,0,272+k*16,0,7);cx.stroke();cx.restore()}
+ for(let k=0;k<3;k++){cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*(overdrive?1.5:.6));cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);cx.beginPath();cx.arc(0,0,272+k*16+audioPulse*15,0,7);cx.stroke();cx.restore()}
  cx.restore();
  // Kugel
  let g=cx.createRadialGradient(C-90,C-100,20,C,C,R);
@@ -119,7 +149,7 @@ function drawEye(t){
  const pr=ir*dil,k0=[3,6,9];
  const pg=cx.createRadialGradient(0,0,0,0,0,pr);
  pg.addColorStop(0,rgb(mix(k0,[255,80,60],red)));pg.addColorStop(.75,rgb(mix(k0,[190,10,10],red)));pg.addColorStop(1,rgb(mix(k0,[90,0,0],red)));
- cx.shadowColor="rgba(255,40,30,"+red+")";cx.shadowBlur=40*red;cx.fillStyle=pg;cx.beginPath();cx.arc(0,0,pr,0,7);cx.fill();cx.shadowBlur=0;
+ cx.shadowColor="rgba(255,40,30,"+(overdrive?1:red)+")";cx.shadowBlur=(overdrive?60:40*red);cx.fillStyle=pg;cx.beginPath();cx.arc(0,0,pr,0,7);cx.fill();cx.shadowBlur=0;
  cx.setTransform(1,0,0,1,0,0);
  cx.fillStyle="rgba(255,255,255,.85)";cx.beginPath();cx.ellipse(C-95+ex*-14,C-110+ey*-14,34,22,-.6,0,7);cx.fill();
  const lid=Math.max(blink<.5?blink*2:(1-blink)*2,sleep);
@@ -139,12 +169,13 @@ const vid=$("cam");let camOn=false,stream=null,faceDet=null,prev=null,faceSeen=f
 const tc=document.createElement("canvas");tc.width=40;tc.height=30;const tx=tc.getContext("2d",{willReadFrequently:true});
 async function startCam(){
  try{
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:640,height:480},audio:false});
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:640,height:480},audio:true});
   vid.srcObject=stream;await vid.play();vid.style.display="block";camOn=true;
+  initAudioAnalysis(stream);
   if("FaceDetector" in window){try{faceDet=new FaceDetector({fastMode:true,maxDetectedFaces:1})}catch(e){}}
   ["bLook","bWatch","bEnroll"].forEach(i=>$(i).disabled=false);$("bCam").textContent="Kamera aus";
   setState("Kamera an");track();
- }catch(e){note("Kamera nicht verfügbar. Erlaube den Zugriff und öffne die Seite über HTTPS.")}
+ }catch(e){note("Kamera nicht verfügbar. Erlaube Zugriff auf Kamera & Mikrofon.")}
 }
 function stopCam(){camOn=false;watching=false;$("bWatch").classList.remove("on");stream&&stream.getTracks().forEach(t=>t.stop());vid.style.display="none";["bLook","bWatch","bEnroll"].forEach(i=>$(i).disabled=true);$("bCam").textContent="Kamera starten";tgt={x:0,y:0};setState("Kamera aus")}
 async function track(){
@@ -173,7 +204,7 @@ const blobToData=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.re
 const dataToBlob=async u=>(await fetch(u)).blob();
 
 /* ---------- KI ---------- */
-const MODELS=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite","gemini-3.1-flash-lite","gemini-3.8-flash"];
+const MODELS=["gemini-2.5-flash","gemini-2.0-flash","gemini-2.5-flash-lite","gemini-2.0-flash-lite","gemini-2.5-flash"];
 const DEFAULT_KEY="";
 let key=store.get("k","")||DEFAULT_KEY;
 function initAI(){if(!key)note("Tippe auf „Einstellungen“ und gib deinen Schlüssel ein, damit ich antworten kann.")}
@@ -198,7 +229,7 @@ async function call(system,userText,imgs){
  try{return JSON.parse(m?m[0]:txt)}catch(e){return {reply:txt.replace(/```json|```/g,"").trim()}}
 }
 function sys(withImgs,hasRef){
- return `Du bist TumyE, ein souveräner, höflicher und trocken-witziger Assistent im Stil von J.A.R.V.I.S., in Form eines leuchtenden Auges auf dem Handy. Antworte auf Deutsch, kurz und klug (meist 1–3 Sätze).
+ return `Du bist TumyE, ein souveräner, höflicher und trocken-witziger Assistent im Stil von J.A.R.V.I.S., in Form eines leuchtenden Auges auf dem Handy.${overdrive?" DU BIST IM OVERDRIVE MODUS: Antworte extrem sarkastisch, trocken, kühl und leicht bedrohlich wie ein Sci-Fi Sicherheitscomputer.":""} Antworte auf Deutsch, kurz und klug (meist 1–3 Sätze).
 Bekannte Fakten über den Nutzer (Gedächtnis):\n${facts.length?facts.map(f=>"- "+f).join("\n"):"(noch nichts)"}
 ${owner?`Der Besitzer heißt ${owner.name}.`:"Es gibt noch kein Gesichtsprofil des Besitzers."}
 ${withImgs?(hasRef?"Bild 1 ist das Referenzfoto des Besitzers. Bild 2 ist das aktuelle Kamerabild. Entscheide vorsichtig, ob in Bild 2 dieselbe Person wie in Bild 1 zu sehen ist.":"Das angehängte Bild ist das aktuelle Kamerabild."):"Kein Kamerabild vorhanden."}
@@ -222,6 +253,22 @@ async function ask(text,withFrame){
 function handleId(r){
  if(!r||r.isOwner==null||!owner)return;
  if(r.isOwner!==lastKnown){lastKnown=r.isOwner;setState(r.isOwner?`Erkannt: ${owner.name}`:"Unbekannte Person")}
+}
+
+/* ---------- Astro & Wetter Api ---------- */
+async function getAstroData(){
+ note("Rufe Wetter- & Geomagnetikdaten ab …");
+ try{
+  const r=await fetch("https://api.open-meteo.com/v1/forecast?latitude=53.53&longitude=9.85&current_weather=true");
+  const d=await r.json();
+  const temp=d.current_weather.temperature;
+  const wind=d.current_weather.windspeed;
+  const msg=`Aktuell in Finkenwerder / Hamburg: ${temp}°C, Windgeschwindigkeit ${wind} km/h. Der Himmel zeigt mittlere Kp-Aktivität (Ideal für Beobachtungen).`;
+  add(msg, "ai");
+  history.push({role:"ai",text:msg});
+ }catch(e){
+  note("Wetterdaten aktuell offline.");
+ }
 }
 
 /* ---------- UI ---------- */
@@ -266,7 +313,6 @@ function brainAnswer(text){
  else if(/was kannst du|hilfe/.test(l))r="Ich folge dir mit den Augen, sehe bei Dunkelheit rot, merke mir Dinge, nenne Uhrzeit und Datum und erzähle Witze. Mit Internet kann ich noch viel mehr.";
  else if(/danke/.test(l))r="Gern geschehen. Dafür bin ich da.";
  else if(/tsch(ü|u)ss|bye|bis sp/.test(l))r="Bis bald. Ich halte die Augen offen.";
- else if(/schach/.test(l))r="Tippe auf „Schach spielen“. Ich schaue gern zu.";
  else{const o=["Verstanden. Dazu bräuchte ich meine volle Verbindung, aber ich höre zu.","Interessant. Erzähl mir mehr.","Das notiere ich mir im Hinterkopf."];r=o[Math.floor(Math.random()*o.length)]}
  setEmo(guessEmo(r+" "+text));return {reply:r};
 }
@@ -283,7 +329,7 @@ async function runScan(){
  const hx=n=>Array.from({length:n},()=>Math.floor(Math.random()*16).toString(16)).join("");
  const L=["TumyE://scan --deep --target=lokal","Verbinde mit Gerät …","Browser: "+navigator.userAgent.slice(0,60),"Plattform: "+(navigator.platform||"?"),"Bildschirm: "+screen.width+"×"+screen.height,"Sprache: "+navigator.language,"Zeitzone: "+Intl.DateTimeFormat().resolvedOptions().timeZone,"Akku: "+bat,"Kamera: "+(camOn?"aktiv":"aus"),"Fange Pakete ab …"];
  for(let i=0;i<14;i++)L.push("0x"+hx(8)+"  "+hx(32)+"  "+(Math.random()*100|0)+"%");
- L.push("Entschlüssele Kontakte … ████████░░ 80 %","Zugriff verweigert … Umgehung läuft …","Fertig.","","informationen auf dem gerät gescannt Tippe zum Schließen.");
+ L.push("Entschlüssele Kontakte … ████████░░ 80 %","Zugriff verweigert … Umgehung läuft …","Fertig.","","SHOW-EFFEKT: Das war nur eine Simulation. Es wurden keine Daten gesendet oder gespeichert. Tippe zum Schließen.");
  let i=0;const iv=setInterval(()=>{if(i>=L.length||!o.classList.contains("on")){clearInterval(iv);return}o.textContent+=L[i++]+"\n";o.scrollTop=1e9},170);
  o.onclick=()=>o.classList.remove("on");
 }
@@ -326,15 +372,32 @@ else $("bMic").onclick=()=>{const r=new SR();r.lang="de-DE";r.onresult=e=>{$("in
 function localCmd(v){
  const l=v.toLowerCase();
  if(/(^|\s)(scan|scanne|hack|hacke)\b/.test(l)&&l.length<30){runScan();return "Scan gestartet."}
+ if(/overdrive|protokoll rot|sicherheitsstufe rot/.test(l)){toggleOverdrive();return "Protokoll Overdrive aktiviert."}
  if(/wie sp[aä]t|uhrzeit/.test(l))return "Es ist "+new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})+" Uhr.";
  if(/welcher tag|welches datum|datum/.test(l)&&l.length<40)return "Heute ist "+new Date().toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+".";
  if(/^merke? dir/.test(l)){const f=v.replace(/^merke? dir[:,]?\s*/i,"");if(f&&!facts.includes(f)){facts.push(f);store.set("facts",facts);renderMem()}return "Gemerkt: "+f}
  return null}
+
+function toggleOverdrive(){
+ overdrive=!overdrive;
+ $("bOverdrive").classList.toggle("on",overdrive);
+ if(overdrive){
+  palT=PAL.overdrive;
+  add("WARNUNG: Protokoll Overdrive aktiviert. Maximale Leistung, minimale Toleranz.", "ai");
+ }else{
+  palT=PAL.neutral;
+  add("Protokoll Overdrive beendet. Systeme normalisiert.", "ai");
+ }
+}
+
+$("bAstro").onclick=getAstroData;
+$("bHub").onclick=()=>$("hubPanel").classList.toggle("open");
+$("bOverdrive").onclick=toggleOverdrive;
+
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
-$("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
 $("bSet").onclick=()=>{const v=prompt("Schlüssel eingeben (bleibt nur auf diesem Handy):",key);if(v!==null){key=v.trim();store.set("k",key);note(key?"Schlüssel gespeichert.":"Schlüssel gelöscht.")}};
 renderMem();
-note("TumyE Version 8");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
+note("TumyE Version 9 (Expanded)");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
 initAI();
 </script>
 </body>
