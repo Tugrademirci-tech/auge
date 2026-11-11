@@ -31,6 +31,7 @@ input[type=text]{flex:1;font:inherit;padding:10px 12px;border-radius:8px;border:
 details{padding:0 14px 6px;font-size:.85rem;color:var(--mute)}
 details li{margin:2px 0}details button{padding:0 6px;font-size:.8rem;margin-left:6px}
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+#scan{position:fixed;inset:0;background:rgba(2,8,12,.94);color:#6ff;font:13px/1.45 ui-monospace,Menlo,monospace;padding:calc(env(safe-area-inset-top,0px) + 16px) 14px 16px;display:none;overflow:hidden;z-index:9;white-space:pre-wrap}#scan.on{display:block}
 </style>
 </head>
 <body>
@@ -46,11 +47,13 @@ details li{margin:2px 0}details button{padding:0 6px;font-size:.8rem;margin-left
  <button id="bOff">Offline-Modus</button>
  <button id="bVoice">Stimme</button>
  <button id="bMic">Mikro</button>
+ <button id="bScan">Scan</button>
 </div>
 <details><summary>Gedächtnis (<span id="nMem">0</span>)</summary><ul id="mem"></ul><button id="bWipe">Alles vergessen</button></details>
 <div id="log" role="log" aria-live="polite"></div>
 <form id="f"><input id="in" type="text" placeholder="Schreib mir etwas …" autocomplete="off"><button>Senden</button></form>
 
+<div id="scan" aria-hidden="true"></div>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -61,6 +64,16 @@ let facts=store.get("facts",[]),owner=store.get("owner",null),history=[],sample=
 const cv=$("eye"),cx=cv.getContext("2d"),W=660,C=W/2,R=250;
 let tgt={x:0,y:0},cur={x:0,y:0},blink=0,nextBlink=2,dil=0.42,dilT=0.42,t0=performance.now();
 let red=0,redT=0,sleep=0,sleepT=0,bright=128,curMode="d";
+const PAL={neutral:[[58,42,16],[184,122,28],[47,106,99],[16,40,42]],freude:[[90,60,10],[240,190,50],[120,190,70],[30,70,30]],wut:[[60,5,5],[220,40,20],[150,10,10],[40,0,0]],traurig:[[15,25,60],[60,100,190],[40,70,140],[10,20,50]],"überrascht":[[60,40,90],[200,170,255],[120,200,255],[30,40,80]],neugierig:[[10,50,60],[40,200,210],[40,140,200],[10,40,60]]};
+let pal=JSON.parse(JSON.stringify(PAL.neutral)),palT=PAL.neutral,emoTimer=null;
+function setEmo(n){palT=PAL[n]||PAL.neutral;clearTimeout(emoTimer);if(n&&n!=="neutral")emoTimer=setTimeout(()=>{palT=PAL.neutral},14000)}
+function guessEmo(t){t=t.toLowerCase();
+ if(/wütend|ärger|nervt|blöd|dumm|hass|idiot/.test(t))return "wut";
+ if(/traurig|schade|leider|einsam|vermiss|tut mir leid/.test(t))return "traurig";
+ if(/haha|super|toll|freu|prima|klasse|danke|gern geschehen|schön/.test(t))return "freude";
+ if(/wow|krass|unglaub|überrasch|\?!|!\?/.test(t))return "überrascht";
+ if(/\?/.test(t))return "neugierig";
+ return "neutral"}
 const mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
 const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
 function drawEye(t){
@@ -68,11 +81,12 @@ function drawEye(t){
  cur.x+=(tgt.x-cur.x)*Math.min(1,dt*7);cur.y+=(tgt.y-cur.y)*Math.min(1,dt*7);
  dil+=(dilT-dil)*Math.min(1,dt*4);
  red+=(redT-red)*Math.min(1,dt*2);sleep+=(sleepT-sleep)*Math.min(1,dt*1.5);
+ for(let i=0;i<4;i++)pal[i]=pal[i].map((v,j)=>v+(palT[i][j]-v)*Math.min(1,dt*3));
  nextBlink-=dt;if(nextBlink<0){blink=1;nextBlink=2+Math.random()*4}
  blink=Math.max(0,blink-dt*5);
  cx.clearRect(0,0,W,W);
  // HUD-Ringe
- const hc=mix([90,220,255],[255,60,50],red);
+ const hc=mix(mix([90,220,255],pal[1],.55),[255,60,50],red);
  cx.save();cx.translate(C,C);cx.lineCap="round";
  for(let k=0;k<3;k++){cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*.6);cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);cx.beginPath();cx.arc(0,0,272+k*16,0,7);cx.stroke();cx.restore()}
  cx.restore();
@@ -88,7 +102,7 @@ function drawEye(t){
  const ang=Math.atan2(py-C,px-C),dist=Math.hypot(px-C,py-C)/R;
  const sq=Math.cos(Math.min(1.2,dist*1.1)),ir=118;
  cx.translate(px,py);cx.rotate(ang);cx.scale(Math.max(.45,sq),1);
- const c1=mix([58,42,16],[70,0,0],red),c2=mix([184,122,28],[210,30,25],red),c3=mix([47,106,99],[140,10,10],red),c4=mix([16,40,42],[30,0,0],red);
+ const c1=mix(pal[0],[70,0,0],red),c2=mix(pal[1],[210,30,25],red),c3=mix(pal[2],[140,10,10],red),c4=mix(pal[3],[30,0,0],red);
  let ig=cx.createRadialGradient(0,0,10,0,0,ir);
  ig.addColorStop(0,rgb(c1));ig.addColorStop(.3,rgb(c2));ig.addColorStop(.72,rgb(c3));ig.addColorStop(1,rgb(c4));
  cx.fillStyle=ig;cx.beginPath();cx.arc(0,0,ir,0,7);cx.fill();
@@ -160,7 +174,8 @@ const dataToBlob=async u=>(await fetch(u)).blob();
 
 /* ---------- KI ---------- */
 const MODELS=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite","gemini-3.1-flash-lite","gemini-3.8-flash"];
-let key=store.get("k","");
+const DEFAULT_KEY="";
+let key=store.get("k","")||DEFAULT_KEY;
 function initAI(){if(!key)note("Tippe auf „Einstellungen“ und gib deinen Schlüssel ein, damit ich antworten kann.")}
 async function call(system,userText,imgs){
  const parts=[];
@@ -188,10 +203,10 @@ Bekannte Fakten über den Nutzer (Gedächtnis):\n${facts.length?facts.map(f=>"- 
 ${owner?`Der Besitzer heißt ${owner.name}.`:"Es gibt noch kein Gesichtsprofil des Besitzers."}
 ${withImgs?(hasRef?"Bild 1 ist das Referenzfoto des Besitzers. Bild 2 ist das aktuelle Kamerabild. Entscheide vorsichtig, ob in Bild 2 dieselbe Person wie in Bild 1 zu sehen ist.":"Das angehängte Bild ist das aktuelle Kamerabild."):"Kein Kamerabild vorhanden."}
 Wenn eine Person gezeigt wird, die nicht eindeutig der Besitzer ist, sag nicht, wer sie ist, sondern beschreibe nur, was du siehst. Rate nie Namen anhand von Gesichtern.
-Gib NUR JSON zurück: {"reply":"deine Antwort","sees":"kurze Beschreibung des Bildes oder leer","isOwner":true|false|null,"newFacts":["neue dauerhaft merkenswerte Fakten, die der Nutzer genannt hat"]}`;
+Gib NUR JSON zurück: {"reply":"deine Antwort","emotion":"neutral|freude|wut|traurig|überrascht|neugierig (Stimmung deiner Antwort)","sees":"kurze Beschreibung des Bildes oder leer","isOwner":true|false|null,"newFacts":["neue dauerhaft merkenswerte Fakten, die der Nutzer genannt hat"]}`;
 }
 async function ask(text,withFrame){
- if(busy)return null;if(useLocal)return askLocal(text);if(!key){if(local)return askLocal(text);note("Erst den Schlüssel unter „Einstellungen“ eingeben.");return null}busy=true;setState("denke …");dilT=.62;
+ if(busy)return null;if(useLocal)return askLocal(text);if(!key){return local?askLocal(text):brainAnswer(text)}busy=true;setState("denke …");dilT=.62;
  try{
   let hasRef=false,vis=false,imgsArr=[];
   if(withFrame&&camOn){const imgs=[];
@@ -199,9 +214,9 @@ async function ask(text,withFrame){
    imgs.push(await frame());imgsArr=imgs;vis=true}
   const convo=history.slice(-8).map(h=>`${h.role==="user"?"Nutzer":"TumyE"}: ${h.text}`).join("\n");
   const r=await call(sys(vis,hasRef),"Bisheriges Gespräch:\n"+(convo||"(Anfang)")+"\n\nNutzer: "+text,imgsArr);
-  if(r&&r.newFacts&&r.newFacts.length){r.newFacts.forEach(f=>{if(f&&!facts.includes(f))facts.push(f)});facts=facts.slice(-40);store.set("facts",facts);renderMem()}
+  if(r)setEmo(r.emotion||guessEmo((r.reply||"")+" "+text));if(r&&r.newFacts&&r.newFacts.length){r.newFacts.forEach(f=>{if(f&&!facts.includes(f))facts.push(f)});facts=facts.slice(-40);store.set("facts",facts);renderMem()}
   return r;
- }catch(e){if(local&&e&&e.code==="net"){busy=false;return await askLocal(text)}note(e&&e.code==="auth"?"Der Schlüssel stimmt nicht. Prüfe die Einstellungen.":e&&e.code==="rate_limited"?"Zu viele Anfragen, kurz warten.":"Das hat nicht geklappt: "+((e&&e.message)||"Fehler"));return null}
+ }catch(e){if(e&&e.code==="net"){busy=false;return local?await askLocal(text):brainAnswer(text)}note(e&&e.code==="auth"?"Der Schlüssel stimmt nicht. Prüfe die Einstellungen.":e&&e.code==="rate_limited"?"Zu viele Anfragen, kurz warten.":"Das hat nicht geklappt: "+((e&&e.message)||"Fehler"));return null}
  finally{busy=false;dilT=.42;setState(camOn?"Kamera an":"Kamera aus")}
 }
 function handleId(r){
@@ -235,6 +250,44 @@ $("bEnroll").onclick=async()=>{
  lastKnown=true;setState("Erkannt: "+name);note(`Gesichtsprofil von ${name} gespeichert (nur auf diesem Gerät).`);
 };
 $("bWipe").onclick=()=>{if(confirm("Gedächtnis und Gesichtsprofil löschen?")){facts=[];owner=null;lastKnown=null;try{localStorage.clear()}catch(e){}renderMem();note("Alles vergessen.")}};
+if(location.hash.indexOf("#k=")===0){key=decodeURIComponent(location.hash.slice(3)).trim();store.set("k",key);window.history.replaceState(null,"",location.pathname+location.search)}
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+const JOKES=["Warum können Geister so schlecht lügen? Man sieht direkt durch sie hindurch.","Ich wollte einen Witz über Akkus erzählen, aber er war schon leer.","Was macht ein Auge, wenn es müde ist? Es macht kurz die Lider dicht."];
+function brainAnswer(text){
+ const l=text.toLowerCase();let r,m;
+ if(/^beobachte/.test(text))return {reply:""};
+ if(/^beschreibe/.test(text))r="Zum Sehen brauche ich eine Verbindung. Ich folge dir aber weiter mit den Augen.";
+ else if((m=l.match(/ich hei(?:ß|ss)e (\S+)/))){const f="Name: "+m[1];if(!facts.includes(f)){facts.push(f);store.set("facts",facts);renderMem()}r="Freut mich, "+m[1]+". Ich merke mir das."}
+ else if(/\b(hallo|hi|hey|moin|servus)\b/.test(l))r="Hallo"+(owner?", "+owner.name:"")+". Schön, dich zu sehen. Wie kann ich helfen?";
+ else if(/wie geht/.test(l))r="Bestens, danke der Nachfrage. Meine Systeme laufen einwandfrei. Und dir?";
+ else if(/wie hei(ß|ss)t du|wer bist du/.test(l))r="Ich bin TumyE, dein persönlicher Assistent. Ein Auge, das mitdenkt.";
+ else if(/wer hat dich|gebaut|erschaffen/.test(l))r="Ich wurde für dich gebaut, und ich lerne ständig dazu.";
+ else if(/witz/.test(l))r=JOKES[Math.floor(Math.random()*JOKES.length)];
+ else if(/was kannst du|hilfe/.test(l))r="Ich folge dir mit den Augen, sehe bei Dunkelheit rot, merke mir Dinge, nenne Uhrzeit und Datum und erzähle Witze. Mit Internet kann ich noch viel mehr.";
+ else if(/danke/.test(l))r="Gern geschehen. Dafür bin ich da.";
+ else if(/tsch(ü|u)ss|bye|bis sp/.test(l))r="Bis bald. Ich halte die Augen offen.";
+ else if(/schach/.test(l))r="Tippe auf „Schach spielen“. Ich schaue gern zu.";
+ else{const o=["Verstanden. Dazu bräuchte ich meine volle Verbindung, aber ich höre zu.","Interessant. Erzähl mir mehr.","Das notiere ich mir im Hinterkopf."];r=o[Math.floor(Math.random()*o.length)]}
+ setEmo(guessEmo(r+" "+text));return {reply:r};
+}
+async function loadLocalWasm(){
+ note("Dein Handy hat kein WebGPU. Ich versuche die langsamere Variante (einmalig ca. 300 MB, Antworten dauern länger) …");
+ const tf=await import("https://esm.run/@huggingface/transformers");
+ const gen=await tf.pipeline("text-generation","onnx-community/Qwen2.5-0.5B-Instruct",{dtype:"q4",device:"wasm",progress_callback:p=>{if(p.progress!=null)setState("Lade "+Math.round(p.progress)+" %")}});
+ local={chat:{completions:{create:async({messages})=>{const o=await gen(messages,{max_new_tokens:120,do_sample:true,temperature:.7});const g=o[0].generated_text;return {choices:[{message:{content:Array.isArray(g)?g[g.length-1].content:String(g)}}]}}}}};
+ setState(camOn?"Kamera an":"Kamera aus");
+}
+async function runScan(){
+ const o=$("scan");o.textContent="";o.classList.add("on");setEmo("neugierig");speak("Scan gestartet.");
+ let bat="n/a";try{const b=await navigator.getBattery();bat=Math.round(b.level*100)+" %"}catch(e){}
+ const hx=n=>Array.from({length:n},()=>Math.floor(Math.random()*16).toString(16)).join("");
+ const L=["TumyE://scan --deep --target=lokal","Verbinde mit Gerät …","Browser: "+navigator.userAgent.slice(0,60),"Plattform: "+(navigator.platform||"?"),"Bildschirm: "+screen.width+"×"+screen.height,"Sprache: "+navigator.language,"Zeitzone: "+Intl.DateTimeFormat().resolvedOptions().timeZone,"Akku: "+bat,"Kamera: "+(camOn?"aktiv":"aus"),"Fange Pakete ab …"];
+ for(let i=0;i<14;i++)L.push("0x"+hx(8)+"  "+hx(32)+"  "+(Math.random()*100|0)+"%");
+ L.push("Entschlüssele Kontakte … ████████░░ 80 %","Zugriff verweigert … Umgehung läuft …","Fertig.","","informationen auf dem gerät gescannt Tippe zum Schließen.");
+ let i=0;const iv=setInterval(()=>{if(i>=L.length||!o.classList.contains("on")){clearInterval(iv);return}o.textContent+=L[i++]+"\n";o.scrollTop=1e9},170);
+ o.onclick=()=>o.classList.remove("on");
+}
+$("bScan").onclick=runScan;
 let local=null,useLocal=false,speakOn=false;
 function sysLocal(){return "Du bist TumyE, ein höflicher, präziser Assistent im Stil von J.A.R.V.I.S. Antworte auf Deutsch in höchstens 2–3 kurzen Sätzen.\nFakten über den Nutzer:\n"+(facts.length?facts.map(f=>"- "+f).join("\n"):"(noch nichts)")}
 async function loadLocal(){
@@ -254,15 +307,14 @@ async function askLocal(text){
   const msgs=[{role:"system",content:sysLocal()}].concat(history.slice(-8).map(h=>({role:h.role==="user"?"user":"assistant",content:h.text})));
   if(!history.length||history[history.length-1].text!==text)msgs.push({role:"user",content:text});
   const r=await local.chat.completions.create({messages:msgs,max_tokens:300,temperature:.7});
-  return {reply:(r.choices[0].message.content||"").trim()};
+  const rp=(r.choices[0].message.content||"").trim();setEmo(guessEmo(rp+" "+text));return {reply:rp||brainAnswer(text).reply};
  }catch(e){note("Offline-Modell Fehler: "+(e.message||e));return null}
  finally{busy=false;dilT=.42;setState(camOn?"Kamera an":"Kamera aus")}
 }
 $("bOff").onclick=async()=>{
  if(useLocal){useLocal=false;$("bOff").classList.remove("on");note("Online-Modus.");return}
  if(!local){
-  if(!navigator.gpu){note("Dieser Browser unterstützt WebGPU nicht, der Offline-Modus ist hier nicht möglich.");return}
-  try{await loadLocal()}catch(e){note("Laden fehlgeschlagen: "+(e.message||e));return}
+  try{await(navigator.gpu?loadLocal():loadLocalWasm())}catch(e){note("Laden fehlgeschlagen: "+(e.message||e));return}
  }
  useLocal=true;$("bOff").classList.add("on");note("Offline-Modus an. Ich schreibe jetzt ohne Internet.");
 };
@@ -273,6 +325,7 @@ if(!SR)$("bMic").style.display="none";
 else $("bMic").onclick=()=>{const r=new SR();r.lang="de-DE";r.onresult=e=>{$("in").value=e.results[0][0].transcript;$("f").requestSubmit()};r.onerror=()=>note("Mikrofon nicht verfügbar.");r.onend=()=>setState(camOn?"Kamera an":"Kamera aus");setState("höre zu …");r.start()};
 function localCmd(v){
  const l=v.toLowerCase();
+ if(/(^|\s)(scan|scanne|hack|hacke)\b/.test(l)&&l.length<30){runScan();return "Scan gestartet."}
  if(/wie sp[aä]t|uhrzeit/.test(l))return "Es ist "+new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})+" Uhr.";
  if(/welcher tag|welches datum|datum/.test(l)&&l.length<40)return "Heute ist "+new Date().toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+".";
  if(/^merke? dir/.test(l)){const f=v.replace(/^merke? dir[:,]?\s*/i,"");if(f&&!facts.includes(f)){facts.push(f);store.set("facts",facts);renderMem()}return "Gemerkt: "+f}
@@ -281,7 +334,7 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 $("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
 $("bSet").onclick=()=>{const v=prompt("Schlüssel eingeben (bleibt nur auf diesem Handy):",key);if(v!==null){key=v.trim();store.set("k",key);note(key?"Schlüssel gespeichert.":"Schlüssel gelöscht.")}};
 renderMem();
-note("TumyE Version 7");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
+note("TumyE Version 8");note(owner?`Hallo, ich kenne ${owner.name}. Starte die Kamera, damit ich dich sehen kann.`:"Starte die Kamera und tippe auf „Mich merken“, damit ich dich beim nächsten Mal erkenne.");
 initAI();
 </script>
 </body>
