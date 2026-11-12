@@ -10,7 +10,7 @@
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:15px/1.4 ui-monospace,Menlo,Consolas,monospace}
 body{display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px calc(env(safe-area-inset-bottom,0px) + 12px);overflow:hidden}
 #state{font-size:.85rem;color:var(--mute);letter-spacing:.06em;text-align:center;min-height:1.4em;font-weight:bold}
-canvas#eye{width:min(94vw,62vh);height:min(94vw,62vh);touch-action:none;cursor:pointer}
+canvas#eye{width:min(94vw,62vh);height:min(94vw,62vh);touch-action:none}
 #bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 button{font:inherit;font-size:.85rem;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 13px;cursor:pointer}
 button:hover,button:focus-visible{border-color:var(--accent);outline:none}
@@ -34,9 +34,6 @@ video{position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-ev
 
 <script>
 "use strict";
-/* Einstellungen */
-let GAIN_X=3.5, GAIN_Y=3.8;
-
 const $=id=>document.getElementById(id);
 const store={
  get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
@@ -53,8 +50,9 @@ const PAL={
  wut:[[60,5,5],[225,35,20],[150,10,10],[40,0,0]],
  freude:[[10,60,20],[70,215,90],[40,150,70],[10,50,25]],
  angst:[[45,75,105],[150,215,255],[105,175,235],[35,65,95]],
- elif:[[120,10,80],[255,105,180],[200,20,120],[60,0,40]], // Pinkes Leuchten für Elif
- scan:[[10,50,60],[40,200,210],[40,140,200],[10,40,60]]};
+ elif:[[220,20,130],[255,105,180],[255,20,147],[100,0,60]], // Leuchtendes Pink für Tugra / Elif
+ scan:[[10,50,60],[40,200,210],[40,140,200],[10,40,60]]
+};
 let pal=JSON.parse(JSON.stringify(PAL.neutral)),palT=PAL.neutral;
 const mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
 const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
@@ -62,40 +60,55 @@ const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
 /* ---------- Zustand ---------- */
 let tgt={x:0,y:0},cur={x:0,y:0},ptr={x:0,y:0},ptrT=0,wx=0,wy=0,wanderT=0;
 let blink=0,nextBlink=2,dil=.42,dilT=.42,t0=performance.now();
-let red=0,redT=0,slp=0,slpT=0,bright=128,rb=0,rbT=0,lastFace=0;
+let red=0,redT=0,slp=0,slpT=0,bright=128,rb=0,rbT=0,lastTargetTime=0;
 let camOn=false,scanning=false,emoName="neutral";
 let detectedName=""; 
-let thinkingOfElif = false; // Zustand für Elif-Gedanken (Pink leuchten)
+let isTugraRecognized = false; // Wird wahr, sobald Tugra erkannt wird
 
 /* ---------- Auge Zeichnen ---------- */
 const cv=$("eye"),cx=cv.getContext("2d"),W=660,C=W/2,R=250;
 function drawEye(t){
  const now=performance.now(),dt=Math.min(.05,(t-t0)/1000);t0=t;
- const faceNow=now-lastFace<1500;
- let T=tgt;
- if(!faceNow){
-  if(now-ptrT<4000)T=ptr;
-  else{wanderT-=dt;if(wanderT<0){wx=(Math.random()-.5)*1.3;wy=(Math.random()-.5)*.8;wanderT=1.4+Math.random()*3}T={x:wx,y:wy}}
+ const hasTarget = now - lastTargetTime < 1800;
+ let T = tgt;
+ 
+ if(!hasTarget){
+  if(now-ptrT<4000){
+   T=ptr;
+  }else{
+   wanderT-=dt;
+   if(wanderT<0){wx=(Math.random()-.5)*1.3;wy=(Math.random()-.5)*.8;wanderT=1.4+Math.random()*3}
+   T={x:wx,y:wy};
+  }
  }
- const rate=faceNow?22:8;
- cur.x+=(T.x-cur.x)*Math.min(1,dt*rate);cur.y+=(T.y-cur.y)*Math.min(1,dt*rate);
+ 
+ // Butterweiche Bewegung (Lerp)
+ const smoothness = hasTarget ? 14 : 6;
+ cur.x += (T.x - cur.x) * Math.min(1, dt * smoothness);
+ cur.y += (T.y - cur.y) * Math.min(1, dt * smoothness);
+ 
  dil+=(dilT-dil)*Math.min(1,dt*5);
  red+=(redT-red)*Math.min(1,dt*2);slp+=(slpT-slp)*Math.min(1,dt*1.5);
  
- // Elif-Modus Pink leuchten steuern
- const activePal = thinkingOfElif ? PAL.elif : (scanning ? PAL.scan : palT);
- rbT = thinkingOfElif ? 1 : 0;
+ // Wenn Tugra erkannt wird -> Automatischer Elif-Pink-Modus
+ const activePal = isTugraRecognized ? PAL.elif : (scanning ? PAL.scan : palT);
+ rbT = isTugraRecognized ? 1 : 0;
  rb+=(rbT-rb)*Math.min(1,dt*4);
 
- for(let i=0;i<4;i++)pal[i]=pal[i].map((v,j)=>v+(activePal[i][j]-v)*Math.min(1,dt*5));
+ for(let i=0;i<4;i++)pal[i]=pal[i].map((v,j)=>v+(activePal[i][j]-v)*Math.min(1,dt*6));
  nextBlink-=dt;if(nextBlink<0){blink=1;nextBlink=2+Math.random()*4}
  blink=Math.max(0,blink-dt*5);
  cx.clearRect(0,0,W,W);
  
  // HUD-Ringe
- const hc=thinkingOfElif ? [255,105,180] : mix(mix([90,220,255],pal[1],.55),[255,60,50],red);
+ const hc = isTugraRecognized ? [255,105,180] : mix(mix([90,220,255],pal[1],.55),[255,60,50],red);
  cx.save();cx.translate(C,C);cx.lineCap="round";
- for(let k=0;k<3;k++){cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*.6);cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);cx.beginPath();cx.arc(0,0,272+k*16,0,7);cx.stroke();cx.restore()}
+ for(let k=0;k<3;k++){
+  cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*.6);
+  cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;
+  cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);
+  cx.beginPath();cx.arc(0,0,272+k*16,0,7);cx.stroke();cx.restore();
+ }
  cx.restore();
  
  // Augapfel
@@ -134,7 +147,8 @@ function drawEye(t){
  const pr=ir*dil,k0=[3,6,9];
  const pg=cx.createRadialGradient(0,0,0,0,0,pr);
  pg.addColorStop(0,rgb(mix(k0,[255,80,60],red)));pg.addColorStop(.75,rgb(mix(k0,[190,10,10],red)));pg.addColorStop(1,rgb(mix(k0,[90,0,0],red)));
- cx.shadowColor=thinkingOfElif?"rgba(255,105,180,0.9)":"rgba(255,40,30,"+red+")";cx.shadowBlur=thinkingOfElif?50:(40*red);
+ cx.shadowColor=isTugraRecognized?"rgba(255,105,180,0.95)":"rgba(255,40,30,"+red+")";
+ cx.shadowBlur=isTugraRecognized?60:(40*red);
  cx.fillStyle=pg;cx.beginPath();cx.arc(0,0,pr,0,7);cx.fill();cx.shadowBlur=0;
  cx.setTransform(1,0,0,1,0,0);
  cx.fillStyle="rgba(255,255,255,.85)";cx.beginPath();cx.ellipse(C-95-ex*14,C-110-ey*14,34,22,-.6,0,7);cx.fill();
@@ -147,7 +161,7 @@ function drawEye(t){
 }
 requestAnimationFrame(drawEye);
 
-/* ---------- Touch / Maus / Elif-Gedanken Steuerung ---------- */
+/* ---------- Touch / Manuelle Pointer Reaktion ---------- */
 function handlePointer(e){
  const r=cv.getBoundingClientRect();
  const clientX = e.clientX ?? e.touches?.[0]?.clientX;
@@ -157,22 +171,17 @@ function handlePointer(e){
  ptr.y=((clientY-r.top)/r.height-.5)*2.8;
  ptrT=performance.now();
 }
-// Gedrückthalten für "An Elif denken" (Pinkes Leuchten)
-cv.addEventListener("pointerdown", (e)=>{ thinkingOfElif = true; handlePointer(e); });
-window.addEventListener("pointerup", ()=>{ thinkingOfElif = false; });
-cv.addEventListener("touchstart", (e)=>{ thinkingOfElif = true; handlePointer(e); }, {passive:true});
-window.addEventListener("touchend", ()=>{ thinkingOfElif = false; });
-
 addEventListener("pointermove",handlePointer);
+addEventListener("pointerdown",handlePointer);
 window.addEventListener("touchmove",handlePointer,{passive:true});
 
-/* ---------- face-api & verbesserte Finger-/Stift-Verfolgung ---------- */
-let FA=false,vid=$("cam"),stream=null,prev=null;
-const tc=document.createElement("canvas");tc.width=80;tc.height=60;const tx=tc.getContext("2d",{willReadFrequently:true});
+/* ---------- face-api & Optisches Tracking (Flüssig für Finger/Stifte) ---------- */
+let FA=false,vid=$("cam"),stream=null,prevFrame=null;
+const tc=document.createElement("canvas");tc.width=120;tc.height=90;const tx=tc.getContext("2d",{willReadFrequently:true});
 const VERS=["1.7.15","1.7.14","1.7.12"];
 function loadScript(u){return new Promise((ok,no)=>{const s=document.createElement("script");s.src=u;s.onload=ok;s.onerror=no;document.head.appendChild(s)})}
 async function loadFA(){
- status("Lade Erkennung …");
+ status("Lade Gesichtserkennung …");
  for(const v of VERS){
   try{
    await loadScript("https://cdn.jsdelivr.net/npm/@vladmandic/face-api@"+v+"/dist/face-api.js");
@@ -187,7 +196,7 @@ async function loadFA(){
 const opts=()=>new faceapi.TinyFaceDetectorOptions({inputSize:256,scoreThreshold:.35});
 
 const es={angry:0,happy:0,fearful:0,surprised:0,neutral:1};
-let emoStable=0,emoPend="neutral",isOwner=false,lastId=0;
+let emoStable=0,emoPend="neutral",lastId=0;
 function pickEmotion(){
  if(es.angry>.4)return "wut";
  if(es.happy>.45)return "freude";
@@ -201,126 +210,135 @@ function setEmotion(n){
 }
 const NAMES={wut:"Wut",freude:"Freude",angst:"Angst",neutral:"neutral"};
 
-/* ---------- Kamera Loop & Motion Tracking (Finger & Stifte) ---------- */
+/* ---------- Haupt-Schleife ---------- */
 async function startCam(){
  try{
   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:640},height:{ideal:480}},audio:false});
   vid.srcObject=stream;await vid.play();camOn=true;
   $("bEnroll").disabled=false;$("bCam").textContent="Kamera aus";status("Kamera an");
   loop();if(!FA)loadFA();
- }catch(e){status("Kamera nicht verfügbar. Erlaube den Zugriff.")}
+ }catch(e){status("Kamera nicht verfügbar.")}
 }
-function stopCam(){camOn=false;stream&&stream.getTracks().forEach(t=>t.stop());$("bEnroll").disabled=true;$("bCam").textContent="Kamera starten";redT=0;slpT=0;palT=PAL.neutral;emoName="neutral";status("Kamera aus")}
+function stopCam(){camOn=false;stream&&stream.getTracks().forEach(t=>t.stop());$("bEnroll").disabled=true;$("bCam").textContent="Kamera starten";redT=0;slpT=0;palT=PAL.neutral;emoName="neutral";isTugraRecognized=false;status("Kamera aus")}
+
+// Sanfter Filter für Positionsänderungen
+let trackSmoothX = 0, trackSmoothY = 0;
 
 async function loop(){
  if(!camOn)return;
- const now=performance.now();let found=false,raw=null;
+ const now=performance.now();
+ let found=false, rawX=0, rawY=0;
+ 
  try{
   if(vid.videoWidth&&vid.readyState>=2){
-   tx.drawImage(vid,0,0,80,60);const imgData=tx.getImageData(0,0,80,60);const d=imgData.data;
+   tx.drawImage(vid,0,0,120,90);
+   const imgData=tx.getImageData(0,0,120,90);
+   const d=imgData.data;
+   
    let sum=0;for(let i=0;i<d.length;i+=4)sum+=d[i]*.3+d[i+1]*.59+d[i+2]*.11;
    bright+=(sum/(d.length/4)-bright)*.3;
    redT=Math.max(0,Math.min(1,(55-bright)/30));slpT=bright<14?1:0;
    
-   let faceDetected = false;
+   let faceFound = false;
 
-   // 1. Gesichtserkennung & Besitzer-Abgleich
+   // 1. Gesichtserkennung & automatischer Erkennungsabgleich
    if(FA&&!slpT){
     try{
      const det=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceExpressions();
      if(det){
-      faceDetected = true;
+      faceFound = true;
       const p=det.landmarks.positions;let sx=0,sy=0;for(let i=36;i<48;i++){sx+=p[i].x;sy+=p[i].y}
       const VW=vid.videoWidth, VH=vid.videoHeight;
-      const fSize=det.detection.box.width/VW;
-      raw={x:sx/12/VW,y:sy/12/VH,size:fSize};found=true;
-      
-      GAIN_X = Math.max(3.0, Math.min(6.0, fSize * 12));
-      GAIN_Y = GAIN_X * 1.1;
+      rawX = sx/12/VW; rawY = sy/12/VH;
+      found = true;
 
       for(const k in es)es[k]+=((det.expressions[k]||0)-es[k])*.4;
       setEmotion(pickEmotion());
 
-      if(now-lastId>800){
+      if(now-lastId > 600){
        lastId=now;
        const r=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();
        if(r && owner && owner.desc){
         const dist=faceapi.euclideanDistance(r.descriptor, owner.desc);
         if(dist < 0.52){
-         isOwner=true;
-         detectedName=owner.name;
+         isTugraRecognized = true;
+         detectedName = owner.name;
         }else{
-         isOwner=false;
-         detectedName="Fremde Person";
+         isTugraRecognized = false;
+         detectedName = "Fremde Person";
         }
        }else if(r){
-        isOwner=false;
-        detectedName="Fremde Person";
+        isTugraRecognized = false;
+        detectedName = "Fremde Person";
        }
       }
      }
     }catch(e){}
    }
 
-   // 2. Erweiterte Bewegungs- und Stift-/Fingerverfolgung (falls kein Gesicht oder zusätzlich nah)
-   if(!faceDetected && !slpT && prev){
-    let mX=0, mY=0, count=0;
-    for(let y=0; y<60; y+=2){
-     for(let x=0; x<80; x+=2){
-      const idx=(y*80+x)*4;
-      const diff = Math.abs(d[idx]-prev[idx]) + Math.abs(d[idx+1]-prev[idx+1]) + Math.abs(d[idx+2]-prev[idx+2]);
-      if(diff > 45){ // Empfindlich für Finger und Stifte
-       mX += x; mY += y; count++;
+   // 2. Flüssige Finger- & Stift-Bewegungserkennung (falls kein Gesicht da ist)
+   if(!faceFound && !slpT && prevFrame){
+    let mX=0, mY=0, totalWeight=0;
+    
+    // Raster-Abtastung für flüssiges Tracking ohne Ruckeln
+    for(let y=4; y<86; y+=3){
+     for(let x=4; x<116; x+=3){
+      const idx = (y*120 + x)*4;
+      const diff = Math.abs(d[idx]-prevFrame[idx]) + Math.abs(d[idx+1]-prevFrame[idx+1]) + Math.abs(d[idx+2]-prevFrame[idx+2]);
+      if(diff > 35){ // Erkennt Stiftspitzen und Finger flüssig
+       const weight = diff;
+       mX += x * weight;
+       mY += y * weight;
+       totalWeight += weight;
       }
      }
     }
-    if(count > 12){ // Reicht aus, um Finger/Stift zu tracken
-     raw={x: (mX/count)/80, y: (mY/count)/60, size: .3};
-     found=true;
-     GAIN_X = 4.2; GAIN_Y = 4.6;
-     detectedName="";
+    
+    if(totalWeight > 600){
+     rawX = (mX / totalWeight) / 120;
+     rawY = (mY / totalWeight) / 90;
+     found = true;
+     detectedName = "Objekt / Finger";
+     isTugraRecognized = false;
     }
    }
-   prev=d;
+   prevFrame = d;
   }
  }catch(e){}
 
  if(found){
-  const nx=(.5-raw.x)*GAIN_X,ny=(raw.y-.5)*GAIN_Y;
-  tgt.x+=(nx-tgt.x)*.8;tgt.y+=(ny-tgt.y)*.8;
-  lastFace=now;
-  if(FA)dilT=baseDil()-Math.max(-.08,Math.min(.1,(raw.size-.25)*.4));
- }else if(now-lastFace>2500){
-  isOwner=false;
-  detectedName="";
+  // Sanftes Abfedern der Zielkoordinaten (Kein Haken oder Pingelig-Sein mehr)
+  trackSmoothX += (rawX - trackSmoothX) * 0.35;
+  trackSmoothY += (rawY - trackSmoothY) * 0.35;
+  
+  tgt.x = (.5 - trackSmoothX) * 3.6;
+  tgt.y = (trackSmoothY - .5) * 4.0;
+  lastTargetTime = now;
+ }else if(now - lastTargetTime > 2000){
+  isTugraRecognized = false;
+  detectedName = "";
   if(emoName!=="neutral"){emoName="neutral";palT=PAL.neutral}
-  for(const k in es)es[k]=k==="neutral"?1:0;
-  dilT=.42+.25*redT;
  }
 
- const seesMe=now-lastFace<1500&&isOwner;
-
- // Statusanzeige (Kein automatisches Erkennen ohne Name)
+ // Statusanzeige (Tugra -> Pink Elif-Modus / Fremde Person / Bereitschaft)
  let dispStatus="";
- if(thinkingOfElif){
-  dispStatus="💕 Denke an Elif 💕";
- }else if(slpT){
+ if(slpT){
   dispStatus="Zu dunkel – Augen zu";
- }else if(now-lastFace<1500){
-  if(isOwner){
-   dispStatus=detectedName; // Zeigt nur deinen Namen (z.B. Tugra)
-  }else if(detectedName==="Fremde Person"){
-   dispStatus="Fremde Person";
+ }else if(now - lastTargetTime < 1800){
+  if(isTugraRecognized){
+   dispStatus = `✨ ${detectedName} (Denke an Elif) ✨`;
+  }else if(detectedName === "Fremde Person"){
+   dispStatus = "Fremde Person";
   }else{
-   dispStatus="Bewegung erfasst";
+   dispStatus = "Verfolge Finger / Stift";
   }
-  if(FA && detectedName && detectedName!=="Fremde Person") dispStatus += " · " + NAMES[emoName];
+  if(FA && isTugraRecognized) dispStatus += " · " + NAMES[emoName];
  }else{
   dispStatus = FA ? "Bereit" : lastStatus;
  }
  status(dispStatus);
 
- setTimeout(loop,FA?0:60);
+ setTimeout(loop, 30); // Schnellere Bildrate für maximale Flüssigkeit
 }
 
 /* ---------- Buttons ---------- */
@@ -329,11 +347,11 @@ $("bCam").onclick=()=>camOn?stopCam():startCam();
 $("bEnroll").onclick=async()=>{
  if(!FA){status("Gesichtserkennung lädt noch …");return}
  
- const inputName = prompt("Wie heißt du?", "Tugra");
+ const inputName = prompt("Gib deinen Namen ein:", "Tugra");
  if(!inputName) return;
  
- status(`Schau direkt in die Kamera, ${inputName} …`);
- await sleep(1200);
+ status(`Schau in die Kamera, ${inputName} …`);
+ await sleep(1000);
  
  const ds=[];
  for(let i=0;i<8;i++){
@@ -345,7 +363,7 @@ $("bEnroll").onclick=async()=>{
  }
  
  if(ds.length<3){
-  status("Gesicht nicht klar gesehen. Versuch es noch einmal.");
+  status("Gesicht nicht deutlich gesehen. Nochmal versuchen.");
   return;
  }
  
@@ -353,9 +371,9 @@ $("bEnroll").onclick=async()=>{
  owner={ name: inputName, desc: avg };
  store.set("owner", owner);
  
- isOwner=true;
+ isTugraRecognized=true;
  detectedName=inputName;
- status(`Gespeichert! Hallo ${inputName}.`);
+ status(`Gesicht gespeichert! Hallo ${inputName}.`);
 };
 
 $("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
