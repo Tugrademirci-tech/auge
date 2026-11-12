@@ -35,7 +35,7 @@ video{position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-ev
 <script>
 "use strict";
 /* Einstellungen */
-const RAINBOW_SECONDS=6;   // so lange leuchtet der Regenbogen, wenn das Auge dich erkennt (999999 = immer solange es dich sieht)
+const RAINBOW_SECONDS=6;   // so lange leuchtet der Regenbogen, wenn das Auge dich erkennt
 const GAIN_X=3.0,GAIN_Y=3.2; // Empfindlichkeit der Verfolgung
 
 const $=id=>document.getElementById(id);
@@ -130,10 +130,26 @@ function drawEye(t){
  requestAnimationFrame(drawEye);
 }
 requestAnimationFrame(drawEye);
-function pointer(e){if(camOn&&performance.now()-lastFace<1500)return;const r=cv.getBoundingClientRect();ptr.x=((e.clientX-r.left)/r.width-.5)*2.6;ptr.y=((e.clientY-r.top)/r.height-.5)*2.6;ptrT=performance.now()}
-addEventListener("pointermove",pointer);addEventListener("pointerdown",pointer);
 
-/* ---------- Gesichtserkennung (läuft im Browser) ---------- */
+/* ---------- Touch- und Maussteuerung (Finger-Reaktion) ---------- */
+function handlePointer(e){
+ const r=cv.getBoundingClientRect();
+ // Unterstützt sowohl Mauszeiger als auch direkte Berührungen mit dem Finger (Touch)
+ const clientX = e.clientX ?? e.touches?.[0]?.clientX;
+ const clientY = e.clientY ?? e.touches?.[0]?.clientY;
+ if(clientX === undefined || clientY === undefined) return;
+ 
+ ptr.x=((clientX-r.left)/r.width-.5)*2.6;
+ ptr.y=((clientY-r.top)/r.height-.5)*2.6;
+ ptrT=performance.now();
+}
+addEventListener("pointermove",handlePointer);
+addEventListener("pointerdown",handlePointer);
+// Spezifische Touch-Events für reibungslose Reaktion auf Smartphones/Tablets
+window.addEventListener("touchmove",handlePointer,{passive:true});
+window.addEventListener("touchstart",handlePointer,{passive:true});
+
+/* ---------- Gesichtserkennung & Speicher-Logik ---------- */
 let FA=false,faceDet=null,vid=$("cam"),stream=null,prev=null;
 const tc=document.createElement("canvas");tc.width=40;tc.height=30;const tx=tc.getContext("2d",{willReadFrequently:true});
 const VERS=["1.7.15","1.7.14","1.7.12"];
@@ -198,19 +214,29 @@ async function loop(){
      raw={x:sx/12/VW,y:sy/12/VH,size:det.detection.box.width/VW};found=true;
      for(const k in es)es[k]+=((det.expressions[k]||0)-es[k])*.4;
      setEmotion(pickEmotion());
-     if(now-lastId>1200){lastId=now;
-      try{const r=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();
-       if(r)isOwner=!owner||faceapi.euclideanDistance(r.descriptor,owner.desc)<.5}catch(e){}
+     
+     // Gesichtsabgleich mit gespeichertem Besitzer
+     if(now-lastId>1200){
+      lastId=now;
+      try{
+       const r=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();
+       if(r && owner && owner.desc) {
+        const dist = faceapi.euclideanDistance(r.descriptor, owner.desc);
+        // Schwellenwert auf 0.6 angepasst für stabilere Erkennung
+        isOwner = dist < 0.6;
+       } else {
+        isOwner = false;
+       }
+      }catch(e){isOwner=false;}
      }
     }
    }else if(!slpT){
-    if(faceDet){const f=await faceDet.detect(vid);if(f[0]){const b=f[0].boundingBox;raw={x:(b.x+b.width/2)/VW,y:(b.y+b.height*.4)/VH,size:b.width/VW};found=true;isOwner=!owner}}
-    else if(prev){let sx=0,sy=0,n=0;for(let i=0;i<d.length;i+=4){const df=Math.abs(d[i]-prev[i])+Math.abs(d[i+1]-prev[i+1])+Math.abs(d[i+2]-prev[i+2]);if(df>70){const q=i/4;sx+=q%40;sy+=Math.floor(q/40);n++}}
-     if(n>12){raw={x:sx/n/40,y:sy/n/30,size:.25};found=true;isOwner=!owner}}
+    if(faceDet){const f=await faceDet.detect(vid);if(f[0]){const b=f[0].boundingBox;raw={x:(b.x+b.width/2)/VW,y:(b.y+b.height*.4)/VH,size:b.width/VW};found=true;isOwner=owner!==null}}
    }
    prev=d;
   }
  }catch(e){}
+ 
  if(found){
   const nx=(.5-raw.x)*GAIN_X,ny=(raw.y-.5)*GAIN_Y;
   tgt.x+=(nx-tgt.x)*.7;tgt.y+=(ny-tgt.y)*.7;
@@ -222,26 +248,43 @@ async function loop(){
   for(const k in es)es[k]=k==="neutral"?1:0;
   dilT=.42+.25*redT;
  }
+ 
  const seesMe=now-lastFace<1500&&isOwner;
  if(seesMe&&!ownerWas)rbUntil=now+RAINBOW_SECONDS*1000;
  ownerWas=seesMe;
  rbT=(seesMe&&now<rbUntil)?1:0;
- status(slpT?"Zu dunkel – Augen zu":redT>.3?"Nachtsicht":now-lastFace<1500?(seesMe?"Ich sehe dich":"Ich sehe jemanden")+(FA?" · "+NAMES[emoName]:""):FA?"Bereit":lastStatus);
+ 
+ status(slpT?"Zu dunkel – Augen zu":redT>.3?"Nachtsicht":now-lastFace<1500?(seesMe?"Ich sehe dich, Tugra!":"Ich sehe jemanden")+(FA?" · "+NAMES[emoName]:""):FA?"Bereit":lastStatus);
  setTimeout(loop,FA?0:90);
 }
 
 /* ---------- Buttons ---------- */
 $("bCam").onclick=()=>camOn?stopCam():startCam();
+
 $("bEnroll").onclick=async()=>{
  if(!FA){status("Gesichtserkennung lädt noch …");return}
- status("Schau direkt in die Kamera …");await sleep(1200);
+ status("Schau direkt in die Kamera (Merke Gesicht) …");await sleep(1200);
  const ds=[];
- for(let i=0;i<6;i++){try{const d=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();if(d)ds.push(Array.from(d.descriptor))}catch(e){}await sleep(250)}
- if(ds.length<3){status("Ich habe dein Gesicht nicht gut gesehen. Nochmal versuchen.");return}
+ for(let i=0;i<8;i++){
+  try{
+   const d=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();
+   if(d) ds.push(Array.from(d.descriptor));
+  }catch(e){}
+  await sleep(250);
+ }
+ if(ds.length<3){status("Gesicht nicht klar erkannt. Versuche es nochmal.");return}
+ 
+ // Mittelwert aus den Descriptoren bilden für präzisen Abgleich
  const avg=ds[0].map((_,i)=>ds.reduce((a,v)=>a+v[i],0)/ds.length);
- owner={desc:avg};store.set("owner",owner);isOwner=true;ownerWas=false;status("Gespeichert, ich erkenne dich jetzt")
+ owner={desc:avg};
+ store.set("owner",owner);
+ isOwner=true;
+ ownerWas=false;
+ status("Gesicht erfolgreich gespeichert! Ich erkenne dich jetzt.");
 };
+
 $("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
+
 $("bScan").onclick=async()=>{
  const o=$("scan");o.textContent="";o.classList.add("on");scanning=true;
  let bat="n/a";try{const b=await navigator.getBattery();bat=Math.round(b.level*100)+" %"}catch(e){}
