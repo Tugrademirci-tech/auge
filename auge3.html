@@ -10,7 +10,7 @@
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:15px/1.4 ui-monospace,Menlo,Consolas,monospace}
 body{display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px calc(env(safe-area-inset-bottom,0px) + 12px);overflow:hidden}
 #state{font-size:.85rem;color:var(--mute);letter-spacing:.06em;text-align:center;min-height:1.4em;font-weight:bold}
-canvas#eye{width:min(94vw,62vh);height:min(94vw,62vh);touch-action:none}
+canvas#eye{width:min(94vw,62vh);height:min(94vw,62vh);touch-action:none;cursor:pointer}
 #bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 button{font:inherit;font-size:.85rem;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 13px;cursor:pointer}
 button:hover,button:focus-visible{border-color:var(--accent);outline:none}
@@ -35,8 +35,7 @@ video{position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-ev
 <script>
 "use strict";
 /* Einstellungen */
-const RAINBOW_SECONDS=6;
-let GAIN_X=3.2, GAIN_Y=3.4; // Dynamische Empfindlichkeit
+let GAIN_X=3.5, GAIN_Y=3.8;
 
 const $=id=>document.getElementById(id);
 const store={
@@ -44,7 +43,7 @@ const store={
  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 };
 
-let owner=store.get("owner", null); // Enthält { name: "Tugra", desc: [...] }
+let owner=store.get("owner", null); // { name: "Tugra", desc: [...] }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let lastStatus=""; function status(t){if(t!==lastStatus){lastStatus=t;$("state").textContent=t}}
 
@@ -54,6 +53,7 @@ const PAL={
  wut:[[60,5,5],[225,35,20],[150,10,10],[40,0,0]],
  freude:[[10,60,20],[70,215,90],[40,150,70],[10,50,25]],
  angst:[[45,75,105],[150,215,255],[105,175,235],[35,65,95]],
+ elif:[[120,10,80],[255,105,180],[200,20,120],[60,0,40]], // Pinkes Leuchten für Elif
  scan:[[10,50,60],[40,200,210],[40,140,200],[10,40,60]]};
 let pal=JSON.parse(JSON.stringify(PAL.neutral)),palT=PAL.neutral;
 const mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
@@ -62,9 +62,10 @@ const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
 /* ---------- Zustand ---------- */
 let tgt={x:0,y:0},cur={x:0,y:0},ptr={x:0,y:0},ptrT=0,wx=0,wy=0,wanderT=0;
 let blink=0,nextBlink=2,dil=.42,dilT=.42,t0=performance.now();
-let red=0,redT=0,slp=0,slpT=0,bright=128,rb=0,rbT=0,rbUntil=0,lastFace=0;
+let red=0,redT=0,slp=0,slpT=0,bright=128,rb=0,rbT=0,lastFace=0;
 let camOn=false,scanning=false,emoName="neutral";
-let detectedName=""; // Wer gerade vor der Kamera steht
+let detectedName=""; 
+let thinkingOfElif = false; // Zustand für Elif-Gedanken (Pink leuchten)
 
 /* ---------- Auge Zeichnen ---------- */
 const cv=$("eye"),cx=cv.getContext("2d"),W=660,C=W/2,R=250;
@@ -76,18 +77,23 @@ function drawEye(t){
   if(now-ptrT<4000)T=ptr;
   else{wanderT-=dt;if(wanderT<0){wx=(Math.random()-.5)*1.3;wy=(Math.random()-.5)*.8;wanderT=1.4+Math.random()*3}T={x:wx,y:wy}}
  }
- const rate=faceNow?20:7;
+ const rate=faceNow?22:8;
  cur.x+=(T.x-cur.x)*Math.min(1,dt*rate);cur.y+=(T.y-cur.y)*Math.min(1,dt*rate);
  dil+=(dilT-dil)*Math.min(1,dt*5);
- red+=(redT-red)*Math.min(1,dt*2);slp+=(slpT-slp)*Math.min(1,dt*1.5);rb+=(rbT-rb)*Math.min(1,dt*3);
- const target=scanning?PAL.scan:palT;
- for(let i=0;i<4;i++)pal[i]=pal[i].map((v,j)=>v+(target[i][j]-v)*Math.min(1,dt*4));
+ red+=(redT-red)*Math.min(1,dt*2);slp+=(slpT-slp)*Math.min(1,dt*1.5);
+ 
+ // Elif-Modus Pink leuchten steuern
+ const activePal = thinkingOfElif ? PAL.elif : (scanning ? PAL.scan : palT);
+ rbT = thinkingOfElif ? 1 : 0;
+ rb+=(rbT-rb)*Math.min(1,dt*4);
+
+ for(let i=0;i<4;i++)pal[i]=pal[i].map((v,j)=>v+(activePal[i][j]-v)*Math.min(1,dt*5));
  nextBlink-=dt;if(nextBlink<0){blink=1;nextBlink=2+Math.random()*4}
  blink=Math.max(0,blink-dt*5);
  cx.clearRect(0,0,W,W);
  
  // HUD-Ringe
- const hc=mix(mix([90,220,255],pal[1],.55),[255,60,50],red);
+ const hc=thinkingOfElif ? [255,105,180] : mix(mix([90,220,255],pal[1],.55),[255,60,50],red);
  cx.save();cx.translate(C,C);cx.lineCap="round";
  for(let k=0;k<3;k++){cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*.6);cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);cx.beginPath();cx.arc(0,0,272+k*16,0,7);cx.stroke();cx.restore()}
  cx.restore();
@@ -104,13 +110,15 @@ function drawEye(t){
  const ang=Math.atan2(py-C,px-C),dist=Math.hypot(px-C,py-C)/R;
  const sq=Math.cos(Math.min(1.2,dist*1.1)),ir=118;
  cx.translate(px,py);cx.rotate(ang);cx.scale(Math.max(.45,sq),1);
+ 
  const c1=mix(pal[0],[70,0,0],red),c2=mix(pal[1],[210,30,25],red),c3=mix(pal[2],[140,10,10],red),c4=mix(pal[3],[30,0,0],red);
  let ig=cx.createRadialGradient(0,0,10,0,0,ir);
  ig.addColorStop(0,rgb(c1));ig.addColorStop(.3,rgb(c2));ig.addColorStop(.72,rgb(c3));ig.addColorStop(1,rgb(c4));
  cx.fillStyle=ig;cx.beginPath();cx.arc(0,0,ir,0,7);cx.fill();
+ 
  if(rb>.02&&cx.createConicGradient){
   const cg=cx.createConicGradient(t/1500,0,0);
-  for(let i=0;i<=8;i++)cg.addColorStop(i/8,`hsla(${(i*45+t/12)%360},95%,55%,${rb*.88})`);
+  for(let i=0;i<=8;i++)cg.addColorStop(i/8,`hsla(${(i*45+t/12)%360},95%,65%,${rb*.95})`);
   cx.fillStyle=cg;cx.beginPath();cx.arc(0,0,ir,0,7);cx.fill();
  }
  cx.save();cx.rotate(-ang+t/9000);
@@ -126,7 +134,8 @@ function drawEye(t){
  const pr=ir*dil,k0=[3,6,9];
  const pg=cx.createRadialGradient(0,0,0,0,0,pr);
  pg.addColorStop(0,rgb(mix(k0,[255,80,60],red)));pg.addColorStop(.75,rgb(mix(k0,[190,10,10],red)));pg.addColorStop(1,rgb(mix(k0,[90,0,0],red)));
- cx.shadowColor="rgba(255,40,30,"+red+")";cx.shadowBlur=40*red;cx.fillStyle=pg;cx.beginPath();cx.arc(0,0,pr,0,7);cx.fill();cx.shadowBlur=0;
+ cx.shadowColor=thinkingOfElif?"rgba(255,105,180,0.9)":"rgba(255,40,30,"+red+")";cx.shadowBlur=thinkingOfElif?50:(40*red);
+ cx.fillStyle=pg;cx.beginPath();cx.arc(0,0,pr,0,7);cx.fill();cx.shadowBlur=0;
  cx.setTransform(1,0,0,1,0,0);
  cx.fillStyle="rgba(255,255,255,.85)";cx.beginPath();cx.ellipse(C-95-ex*14,C-110-ey*14,34,22,-.6,0,7);cx.fill();
  const lid=Math.max(blink<.5?blink*2:(1-blink)*2,slp);
@@ -138,28 +147,32 @@ function drawEye(t){
 }
 requestAnimationFrame(drawEye);
 
-/* ---------- Finger / Touch / Mouse Reaktion ---------- */
+/* ---------- Touch / Maus / Elif-Gedanken Steuerung ---------- */
 function handlePointer(e){
  const r=cv.getBoundingClientRect();
  const clientX = e.clientX ?? e.touches?.[0]?.clientX;
  const clientY = e.clientY ?? e.touches?.[0]?.clientY;
  if(clientX === undefined || clientY === undefined) return;
- ptr.x=((clientX-r.left)/r.width-.5)*2.6;
- ptr.y=((clientY-r.top)/r.height-.5)*2.6;
+ ptr.x=((clientX-r.left)/r.width-.5)*2.8;
+ ptr.y=((clientY-r.top)/r.height-.5)*2.8;
  ptrT=performance.now();
 }
-addEventListener("pointermove",handlePointer);
-addEventListener("pointerdown",handlePointer);
-window.addEventListener("touchmove",handlePointer,{passive:true});
-window.addEventListener("touchstart",handlePointer,{passive:true});
+// Gedrückthalten für "An Elif denken" (Pinkes Leuchten)
+cv.addEventListener("pointerdown", (e)=>{ thinkingOfElif = true; handlePointer(e); });
+window.addEventListener("pointerup", ()=>{ thinkingOfElif = false; });
+cv.addEventListener("touchstart", (e)=>{ thinkingOfElif = true; handlePointer(e); }, {passive:true});
+window.addEventListener("touchend", ()=>{ thinkingOfElif = false; });
 
-/* ---------- face-api & Modelle ---------- */
-let FA=false,faceDet=null,vid=$("cam"),stream=null,prev=null;
-const tc=document.createElement("canvas");tc.width=40;tc.height=30;const tx=tc.getContext("2d",{willReadFrequently:true});
+addEventListener("pointermove",handlePointer);
+window.addEventListener("touchmove",handlePointer,{passive:true});
+
+/* ---------- face-api & verbesserte Finger-/Stift-Verfolgung ---------- */
+let FA=false,vid=$("cam"),stream=null,prev=null;
+const tc=document.createElement("canvas");tc.width=80;tc.height=60;const tx=tc.getContext("2d",{willReadFrequently:true});
 const VERS=["1.7.15","1.7.14","1.7.12"];
 function loadScript(u){return new Promise((ok,no)=>{const s=document.createElement("script");s.src=u;s.onload=ok;s.onerror=no;document.head.appendChild(s)})}
 async function loadFA(){
- status("Lade Gesichtserkennung …");
+ status("Lade Erkennung …");
  for(const v of VERS){
   try{
    await loadScript("https://cdn.jsdelivr.net/npm/@vladmandic/face-api@"+v+"/dist/face-api.js");
@@ -169,13 +182,12 @@ async function loadFA(){
    FA=true;status("Bereit");return;
   }catch(e){}
  }
- status("Einfacher Modus aktiv");
+ status("Bewegungs-Modus aktiv");
 }
 const opts=()=>new faceapi.TinyFaceDetectorOptions({inputSize:256,scoreThreshold:.35});
 
-/* Emotionen */
 const es={angry:0,happy:0,fearful:0,surprised:0,neutral:1};
-let emoStable=0,emoPend="neutral",isOwner=false,ownerWas=false,lastId=0;
+let emoStable=0,emoPend="neutral",isOwner=false,lastId=0;
 function pickEmotion(){
  if(es.angry>.4)return "wut";
  if(es.happy>.45)return "freude";
@@ -189,53 +201,54 @@ function setEmotion(n){
 }
 const NAMES={wut:"Wut",freude:"Freude",angst:"Angst",neutral:"neutral"};
 
-/* ---------- Kamera Loop ---------- */
+/* ---------- Kamera Loop & Motion Tracking (Finger & Stifte) ---------- */
 async function startCam(){
  try{
   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:640},height:{ideal:480}},audio:false});
   vid.srcObject=stream;await vid.play();camOn=true;
-  if("FaceDetector" in window){try{faceDet=new FaceDetector({fastMode:false,maxDetectedFaces:1})}catch(e){}}
   $("bEnroll").disabled=false;$("bCam").textContent="Kamera aus";status("Kamera an");
   loop();if(!FA)loadFA();
  }catch(e){status("Kamera nicht verfügbar. Erlaube den Zugriff.")}
 }
-function stopCam(){camOn=false;stream&&stream.getTracks().forEach(t=>t.stop());$("bEnroll").disabled=true;$("bCam").textContent="Kamera starten";redT=0;slpT=0;rbT=0;palT=PAL.neutral;emoName="neutral";status("Kamera aus")}
+function stopCam(){camOn=false;stream&&stream.getTracks().forEach(t=>t.stop());$("bEnroll").disabled=true;$("bCam").textContent="Kamera starten";redT=0;slpT=0;palT=PAL.neutral;emoName="neutral";status("Kamera aus")}
 
 async function loop(){
  if(!camOn)return;
  const now=performance.now();let found=false,raw=null;
  try{
   if(vid.videoWidth&&vid.readyState>=2){
-   tx.drawImage(vid,0,0,40,30);const d=tx.getImageData(0,0,40,30).data;
+   tx.drawImage(vid,0,0,80,60);const imgData=tx.getImageData(0,0,80,60);const d=imgData.data;
    let sum=0;for(let i=0;i<d.length;i+=4)sum+=d[i]*.3+d[i+1]*.59+d[i+2]*.11;
    bright+=(sum/(d.length/4)-bright)*.3;
    redT=Math.max(0,Math.min(1,(55-bright)/30));slpT=bright<14?1:0;
-   const VW=vid.videoWidth,VH=vid.videoHeight;
    
+   let faceDetected = false;
+
+   // 1. Gesichtserkennung & Besitzer-Abgleich
    if(FA&&!slpT){
-    const det=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceExpressions();
-    if(det){
-     const p=det.landmarks.positions;let sx=0,sy=0;for(let i=36;i<48;i++){sx+=p[i].x;sy+=p[i].y}
-     const fSize=det.detection.box.width/VW;
-     raw={x:sx/12/VW,y:sy/12/VH,size:fSize};found=true;
-     
-     // Dynamische Verfolgung im Nahbereich (wenn Gesicht näher ist)
-     const dynamicGain = Math.max(2.8, Math.min(5.5, fSize * 10));
-     GAIN_X = dynamicGain; GAIN_Y = dynamicGain * 1.1;
+    try{
+     const det=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceExpressions();
+     if(det){
+      faceDetected = true;
+      const p=det.landmarks.positions;let sx=0,sy=0;for(let i=36;i<48;i++){sx+=p[i].x;sy+=p[i].y}
+      const VW=vid.videoWidth, VH=vid.videoHeight;
+      const fSize=det.detection.box.width/VW;
+      raw={x:sx/12/VW,y:sy/12/VH,size:fSize};found=true;
+      
+      GAIN_X = Math.max(3.0, Math.min(6.0, fSize * 12));
+      GAIN_Y = GAIN_X * 1.1;
 
-     for(const k in es)es[k]+=((det.expressions[k]||0)-es[k])*.4;
-     setEmotion(pickEmotion());
+      for(const k in es)es[k]+=((det.expressions[k]||0)-es[k])*.4;
+      setEmotion(pickEmotion());
 
-     // Gesichtserkennung / Abgleich
-     if(now-lastId>800){
-      lastId=now;
-      try{
+      if(now-lastId>800){
+       lastId=now;
        const r=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();
        if(r && owner && owner.desc){
         const dist=faceapi.euclideanDistance(r.descriptor, owner.desc);
         if(dist < 0.52){
          isOwner=true;
-         detectedName=owner.name || "Tugra";
+         detectedName=owner.name;
         }else{
          isOwner=false;
          detectedName="Fremde Person";
@@ -244,18 +257,28 @@ async function loop(){
         isOwner=false;
         detectedName="Fremde Person";
        }
-      }catch(e){}
+      }
+     }
+    }catch(e){}
+   }
+
+   // 2. Erweiterte Bewegungs- und Stift-/Fingerverfolgung (falls kein Gesicht oder zusätzlich nah)
+   if(!faceDetected && !slpT && prev){
+    let mX=0, mY=0, count=0;
+    for(let y=0; y<60; y+=2){
+     for(let x=0; x<80; x+=2){
+      const idx=(y*80+x)*4;
+      const diff = Math.abs(d[idx]-prev[idx]) + Math.abs(d[idx+1]-prev[idx+1]) + Math.abs(d[idx+2]-prev[idx+2]);
+      if(diff > 45){ // Empfindlich für Finger und Stifte
+       mX += x; mY += y; count++;
+      }
      }
     }
-   }else if(!slpT){
-    if(faceDet){
-     const f=await faceDet.detect(vid);
-     if(f[0]){
-      const b=f[0].boundingBox;
-      raw={x:(b.x+b.width/2)/VW,y:(b.y+b.height*.4)/VH,size:b.width/VW};
-      found=true;
-      detectedName=owner?owner.name:"Erkannt";
-     }
+    if(count > 12){ // Reicht aus, um Finger/Stift zu tracken
+     raw={x: (mX/count)/80, y: (mY/count)/60, size: .3};
+     found=true;
+     GAIN_X = 4.2; GAIN_Y = 4.6;
+     detectedName="";
     }
    }
    prev=d;
@@ -264,7 +287,7 @@ async function loop(){
 
  if(found){
   const nx=(.5-raw.x)*GAIN_X,ny=(raw.y-.5)*GAIN_Y;
-  tgt.x+=(nx-tgt.x)*.7;tgt.y+=(ny-tgt.y)*.7;
+  tgt.x+=(nx-tgt.x)*.8;tgt.y+=(ny-tgt.y)*.8;
   lastFace=now;
   if(FA)dilT=baseDil()-Math.max(-.08,Math.min(.1,(raw.size-.25)*.4));
  }else if(now-lastFace>2500){
@@ -276,36 +299,37 @@ async function loop(){
  }
 
  const seesMe=now-lastFace<1500&&isOwner;
- if(seesMe&&!ownerWas)rbUntil=now+RAINBOW_SECONDS*1000;
- ownerWas=seesMe;
- rbT=(seesMe&&now<rbUntil)?1:0;
 
- // Statusanzeige oben
+ // Statusanzeige (Kein automatisches Erkennen ohne Name)
  let dispStatus="";
- if(slpT){
+ if(thinkingOfElif){
+  dispStatus="💕 Denke an Elif 💕";
+ }else if(slpT){
   dispStatus="Zu dunkel – Augen zu";
  }else if(now-lastFace<1500){
   if(isOwner){
-   dispStatus=`Ich sehe dich, ${detectedName}!`;
-  }else{
+   dispStatus=detectedName; // Zeigt nur deinen Namen (z.B. Tugra)
+  }else if(detectedName==="Fremde Person"){
    dispStatus="Fremde Person";
+  }else{
+   dispStatus="Bewegung erfasst";
   }
-  if(FA) dispStatus += " · " + NAMES[emoName];
+  if(FA && detectedName && detectedName!=="Fremde Person") dispStatus += " · " + NAMES[emoName];
  }else{
   dispStatus = FA ? "Bereit" : lastStatus;
  }
  status(dispStatus);
 
- setTimeout(loop,FA?0:90);
+ setTimeout(loop,FA?0:60);
 }
 
-/* ---------- Buttons & Aktionen ---------- */
+/* ---------- Buttons ---------- */
 $("bCam").onclick=()=>camOn?stopCam():startCam();
 
 $("bEnroll").onclick=async()=>{
  if(!FA){status("Gesichtserkennung lädt noch …");return}
  
- const inputName = prompt("Wie heißt du?", owner ? owner.name : "Tugra");
+ const inputName = prompt("Wie heißt du?", "Tugra");
  if(!inputName) return;
  
  status(`Schau direkt in die Kamera, ${inputName} …`);
@@ -321,19 +345,17 @@ $("bEnroll").onclick=async()=>{
  }
  
  if(ds.length<3){
-  status("Gesicht nicht gut gesehen. Versuch es noch einmal.");
+  status("Gesicht nicht klar gesehen. Versuch es noch einmal.");
   return;
  }
  
- // Mittelwert berechnen für präzisen Abgleich
  const avg=ds[0].map((_,i)=>ds.reduce((a,v)=>a+v[i],0)/ds.length);
  owner={ name: inputName, desc: avg };
  store.set("owner", owner);
  
  isOwner=true;
  detectedName=inputName;
- ownerWas=false;
- status(`Gespeichert! Hallo ${inputName}, ich erkenne dich jetzt.`);
+ status(`Gespeichert! Hallo ${inputName}.`);
 };
 
 $("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
