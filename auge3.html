@@ -9,7 +9,7 @@
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:15px/1.4 ui-monospace,Menlo,Consolas,monospace}
 body{display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px calc(env(safe-area-inset-bottom,0px) + 12px);overflow:hidden}
-#state{font-size:.8rem;color:var(--mute);letter-spacing:.06em;text-align:center;min-height:1.4em}
+#state{font-size:.85rem;color:var(--mute);letter-spacing:.06em;text-align:center;min-height:1.4em;font-weight:bold}
 canvas#eye{width:min(94vw,62vh);height:min(94vw,62vh);touch-action:none}
 #bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 button{font:inherit;font-size:.85rem;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 13px;cursor:pointer}
@@ -35,14 +35,18 @@ video{position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-ev
 <script>
 "use strict";
 /* Einstellungen */
-const RAINBOW_SECONDS=6;   // so lange leuchtet der Regenbogen, wenn das Auge dich erkennt
-const GAIN_X=3.0,GAIN_Y=3.2; // Empfindlichkeit der Verfolgung
+const RAINBOW_SECONDS=6;
+let GAIN_X=3.2, GAIN_Y=3.4; // Dynamische Empfindlichkeit
 
 const $=id=>document.getElementById(id);
-const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
-let owner=store.get("owner",null);
+const store={
+ get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
+ set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+};
+
+let owner=store.get("owner", null); // Enthält { name: "Tugra", desc: [...] }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-let lastStatus="";function status(t){if(t!==lastStatus){lastStatus=t;$("state").textContent=t}}
+let lastStatus=""; function status(t){if(t!==lastStatus){lastStatus=t;$("state").textContent=t}}
 
 /* ---------- Farben ---------- */
 const PAL={
@@ -60,8 +64,9 @@ let tgt={x:0,y:0},cur={x:0,y:0},ptr={x:0,y:0},ptrT=0,wx=0,wy=0,wanderT=0;
 let blink=0,nextBlink=2,dil=.42,dilT=.42,t0=performance.now();
 let red=0,redT=0,slp=0,slpT=0,bright=128,rb=0,rbT=0,rbUntil=0,lastFace=0;
 let camOn=false,scanning=false,emoName="neutral";
+let detectedName=""; // Wer gerade vor der Kamera steht
 
-/* ---------- Auge ---------- */
+/* ---------- Auge Zeichnen ---------- */
 const cv=$("eye"),cx=cv.getContext("2d"),W=660,C=W/2,R=250;
 function drawEye(t){
  const now=performance.now(),dt=Math.min(.05,(t-t0)/1000);t0=t;
@@ -71,7 +76,7 @@ function drawEye(t){
   if(now-ptrT<4000)T=ptr;
   else{wanderT-=dt;if(wanderT<0){wx=(Math.random()-.5)*1.3;wy=(Math.random()-.5)*.8;wanderT=1.4+Math.random()*3}T={x:wx,y:wy}}
  }
- const rate=faceNow?18:6;
+ const rate=faceNow?20:7;
  cur.x+=(T.x-cur.x)*Math.min(1,dt*rate);cur.y+=(T.y-cur.y)*Math.min(1,dt*rate);
  dil+=(dilT-dil)*Math.min(1,dt*5);
  red+=(redT-red)*Math.min(1,dt*2);slp+=(slpT-slp)*Math.min(1,dt*1.5);rb+=(rbT-rb)*Math.min(1,dt*3);
@@ -80,12 +85,14 @@ function drawEye(t){
  nextBlink-=dt;if(nextBlink<0){blink=1;nextBlink=2+Math.random()*4}
  blink=Math.max(0,blink-dt*5);
  cx.clearRect(0,0,W,W);
+ 
  // HUD-Ringe
  const hc=mix(mix([90,220,255],pal[1],.55),[255,60,50],red);
  cx.save();cx.translate(C,C);cx.lineCap="round";
  for(let k=0;k<3;k++){cx.save();cx.rotate(t/1000*(k%2?-.35:.25)*(k+1)*.6);cx.strokeStyle=`rgba(${hc[0]},${hc[1]},${hc[2]},${.55-k*.14})`;cx.lineWidth=3-k*.7;cx.setLineDash([k?6:60,k?10:24+k*10]);cx.beginPath();cx.arc(0,0,272+k*16,0,7);cx.stroke();cx.restore()}
  cx.restore();
- // Kugel
+ 
+ // Augapfel
  let g=cx.createRadialGradient(C-90,C-100,20,C,C,R);
  g.addColorStop(0,"#fbf8f0");g.addColorStop(.7,"#e4ddd0");g.addColorStop(1,"#a99f90");
  cx.fillStyle=g;cx.beginPath();cx.arc(C,C,R,0,7);cx.fill();
@@ -131,25 +138,22 @@ function drawEye(t){
 }
 requestAnimationFrame(drawEye);
 
-/* ---------- Touch- und Maussteuerung (Finger-Reaktion) ---------- */
+/* ---------- Finger / Touch / Mouse Reaktion ---------- */
 function handlePointer(e){
  const r=cv.getBoundingClientRect();
- // Unterstützt sowohl Mauszeiger als auch direkte Berührungen mit dem Finger (Touch)
  const clientX = e.clientX ?? e.touches?.[0]?.clientX;
  const clientY = e.clientY ?? e.touches?.[0]?.clientY;
  if(clientX === undefined || clientY === undefined) return;
- 
  ptr.x=((clientX-r.left)/r.width-.5)*2.6;
  ptr.y=((clientY-r.top)/r.height-.5)*2.6;
  ptrT=performance.now();
 }
 addEventListener("pointermove",handlePointer);
 addEventListener("pointerdown",handlePointer);
-// Spezifische Touch-Events für reibungslose Reaktion auf Smartphones/Tablets
 window.addEventListener("touchmove",handlePointer,{passive:true});
 window.addEventListener("touchstart",handlePointer,{passive:true});
 
-/* ---------- Gesichtserkennung & Speicher-Logik ---------- */
+/* ---------- face-api & Modelle ---------- */
 let FA=false,faceDet=null,vid=$("cam"),stream=null,prev=null;
 const tc=document.createElement("canvas");tc.width=40;tc.height=30;const tx=tc.getContext("2d",{willReadFrequently:true});
 const VERS=["1.7.15","1.7.14","1.7.12"];
@@ -165,11 +169,11 @@ async function loadFA(){
    FA=true;status("Bereit");return;
   }catch(e){}
  }
- status("Einfacher Modus: Verfolgung ohne Emotionen");
+ status("Einfacher Modus aktiv");
 }
 const opts=()=>new faceapi.TinyFaceDetectorOptions({inputSize:256,scoreThreshold:.35});
 
-/* Emotion */
+/* Emotionen */
 const es={angry:0,happy:0,fearful:0,surprised:0,neutral:1};
 let emoStable=0,emoPend="neutral",isOwner=false,ownerWas=false,lastId=0;
 function pickEmotion(){
@@ -185,7 +189,7 @@ function setEmotion(n){
 }
 const NAMES={wut:"Wut",freude:"Freude",angst:"Angst",neutral:"neutral"};
 
-/* ---------- Kamera ---------- */
+/* ---------- Kamera Loop ---------- */
 async function startCam(){
  try{
   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:640},height:{ideal:480}},audio:false});
@@ -193,7 +197,7 @@ async function startCam(){
   if("FaceDetector" in window){try{faceDet=new FaceDetector({fastMode:false,maxDetectedFaces:1})}catch(e){}}
   $("bEnroll").disabled=false;$("bCam").textContent="Kamera aus";status("Kamera an");
   loop();if(!FA)loadFA();
- }catch(e){status("Kamera nicht verfügbar. Erlaube den Zugriff (HTTPS nötig).")}
+ }catch(e){status("Kamera nicht verfügbar. Erlaube den Zugriff.")}
 }
 function stopCam(){camOn=false;stream&&stream.getTracks().forEach(t=>t.stop());$("bEnroll").disabled=true;$("bCam").textContent="Kamera starten";redT=0;slpT=0;rbT=0;palT=PAL.neutral;emoName="neutral";status("Kamera aus")}
 
@@ -207,36 +211,57 @@ async function loop(){
    bright+=(sum/(d.length/4)-bright)*.3;
    redT=Math.max(0,Math.min(1,(55-bright)/30));slpT=bright<14?1:0;
    const VW=vid.videoWidth,VH=vid.videoHeight;
+   
    if(FA&&!slpT){
     const det=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceExpressions();
     if(det){
      const p=det.landmarks.positions;let sx=0,sy=0;for(let i=36;i<48;i++){sx+=p[i].x;sy+=p[i].y}
-     raw={x:sx/12/VW,y:sy/12/VH,size:det.detection.box.width/VW};found=true;
+     const fSize=det.detection.box.width/VW;
+     raw={x:sx/12/VW,y:sy/12/VH,size:fSize};found=true;
+     
+     // Dynamische Verfolgung im Nahbereich (wenn Gesicht näher ist)
+     const dynamicGain = Math.max(2.8, Math.min(5.5, fSize * 10));
+     GAIN_X = dynamicGain; GAIN_Y = dynamicGain * 1.1;
+
      for(const k in es)es[k]+=((det.expressions[k]||0)-es[k])*.4;
      setEmotion(pickEmotion());
-     
-     // Gesichtsabgleich mit gespeichertem Besitzer
-     if(now-lastId>1200){
+
+     // Gesichtserkennung / Abgleich
+     if(now-lastId>800){
       lastId=now;
       try{
        const r=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();
-       if(r && owner && owner.desc) {
-        const dist = faceapi.euclideanDistance(r.descriptor, owner.desc);
-        // Schwellenwert auf 0.6 angepasst für stabilere Erkennung
-        isOwner = dist < 0.6;
-       } else {
-        isOwner = false;
+       if(r && owner && owner.desc){
+        const dist=faceapi.euclideanDistance(r.descriptor, owner.desc);
+        if(dist < 0.52){
+         isOwner=true;
+         detectedName=owner.name || "Tugra";
+        }else{
+         isOwner=false;
+         detectedName="Fremde Person";
+        }
+       }else if(r){
+        isOwner=false;
+        detectedName="Fremde Person";
        }
-      }catch(e){isOwner=false;}
+      }catch(e){}
      }
     }
    }else if(!slpT){
-    if(faceDet){const f=await faceDet.detect(vid);if(f[0]){const b=f[0].boundingBox;raw={x:(b.x+b.width/2)/VW,y:(b.y+b.height*.4)/VH,size:b.width/VW};found=true;isOwner=owner!==null}}
+    if(faceDet){
+     const f=await faceDet.detect(vid);
+     if(f[0]){
+      const b=f[0].boundingBox;
+      raw={x:(b.x+b.width/2)/VW,y:(b.y+b.height*.4)/VH,size:b.width/VW};
+      found=true;
+      detectedName=owner?owner.name:"Erkannt";
+     }
+    }
    }
    prev=d;
   }
  }catch(e){}
- 
+
  if(found){
   const nx=(.5-raw.x)*GAIN_X,ny=(raw.y-.5)*GAIN_Y;
   tgt.x+=(nx-tgt.x)*.7;tgt.y+=(ny-tgt.y)*.7;
@@ -244,43 +269,71 @@ async function loop(){
   if(FA)dilT=baseDil()-Math.max(-.08,Math.min(.1,(raw.size-.25)*.4));
  }else if(now-lastFace>2500){
   isOwner=false;
+  detectedName="";
   if(emoName!=="neutral"){emoName="neutral";palT=PAL.neutral}
   for(const k in es)es[k]=k==="neutral"?1:0;
   dilT=.42+.25*redT;
  }
- 
+
  const seesMe=now-lastFace<1500&&isOwner;
  if(seesMe&&!ownerWas)rbUntil=now+RAINBOW_SECONDS*1000;
  ownerWas=seesMe;
  rbT=(seesMe&&now<rbUntil)?1:0;
- 
- status(slpT?"Zu dunkel – Augen zu":redT>.3?"Nachtsicht":now-lastFace<1500?(seesMe?"Ich sehe dich, Tugra!":"Ich sehe jemanden")+(FA?" · "+NAMES[emoName]:""):FA?"Bereit":lastStatus);
+
+ // Statusanzeige oben
+ let dispStatus="";
+ if(slpT){
+  dispStatus="Zu dunkel – Augen zu";
+ }else if(now-lastFace<1500){
+  if(isOwner){
+   dispStatus=`Ich sehe dich, ${detectedName}!`;
+  }else{
+   dispStatus="Fremde Person";
+  }
+  if(FA) dispStatus += " · " + NAMES[emoName];
+ }else{
+  dispStatus = FA ? "Bereit" : lastStatus;
+ }
+ status(dispStatus);
+
  setTimeout(loop,FA?0:90);
 }
 
-/* ---------- Buttons ---------- */
+/* ---------- Buttons & Aktionen ---------- */
 $("bCam").onclick=()=>camOn?stopCam():startCam();
 
 $("bEnroll").onclick=async()=>{
  if(!FA){status("Gesichtserkennung lädt noch …");return}
- status("Schau direkt in die Kamera (Merke Gesicht) …");await sleep(1200);
+ 
+ const inputName = prompt("Wie heißt du?", owner ? owner.name : "Tugra");
+ if(!inputName) return;
+ 
+ status(`Schau direkt in die Kamera, ${inputName} …`);
+ await sleep(1200);
+ 
  const ds=[];
  for(let i=0;i<8;i++){
   try{
    const d=await faceapi.detectSingleFace(vid,opts()).withFaceLandmarks(true).withFaceDescriptor();
    if(d) ds.push(Array.from(d.descriptor));
   }catch(e){}
-  await sleep(250);
+  await sleep(200);
  }
- if(ds.length<3){status("Gesicht nicht klar erkannt. Versuche es nochmal.");return}
  
- // Mittelwert aus den Descriptoren bilden für präzisen Abgleich
+ if(ds.length<3){
+  status("Gesicht nicht gut gesehen. Versuch es noch einmal.");
+  return;
+ }
+ 
+ // Mittelwert berechnen für präzisen Abgleich
  const avg=ds[0].map((_,i)=>ds.reduce((a,v)=>a+v[i],0)/ds.length);
- owner={desc:avg};
- store.set("owner",owner);
+ owner={ name: inputName, desc: avg };
+ store.set("owner", owner);
+ 
  isOwner=true;
+ detectedName=inputName;
  ownerWas=false;
- status("Gesicht erfolgreich gespeichert! Ich erkenne dich jetzt.");
+ status(`Gespeichert! Hallo ${inputName}, ich erkenne dich jetzt.`);
 };
 
 $("bChess").onclick=()=>window.open("https://tugrademirci-tech.github.io/tassy/","_blank","noopener");
@@ -295,6 +348,7 @@ $("bScan").onclick=async()=>{
  let i=0;const iv=setInterval(()=>{if(i>=L.length||!o.classList.contains("on")){clearInterval(iv);return}o.textContent+=L[i++]+"\n";o.scrollTop=1e9},170);
  o.onclick=()=>{o.classList.remove("on");scanning=false};
 };
+
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 </body>
